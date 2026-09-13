@@ -44,6 +44,8 @@ class HudOverlay:
         self._active_targets: Dict[int, UIElementTarget] = {}
         self._badge_tag_map: Dict[int, List[int]] = {}  # target_id -> canvas object IDs
         self._footer_tag_ids: List[int] = []
+        self._min_x: int = 0
+        self._min_y: int = 0
 
         self._init_overlay_window()
 
@@ -70,6 +72,8 @@ class HudOverlay:
         self._window.attributes("-topmost", True)
 
         min_x, min_y, max_x, max_y = get_virtual_desktop_bounds()
+        self._min_x = min_x
+        self._min_y = min_y
         width = max(100, max_x - min_x)
         height = max(100, max_y - min_y)
 
@@ -116,6 +120,7 @@ class HudOverlay:
 
             self._window.deiconify()
             self._window.lift()
+            self._window.attributes("-topmost", True)
             self._is_visible = True
             logger.info("Projected %d HUD target badges (Page %d/%d).", len(targets), current_page + 1, total_pages)
 
@@ -126,7 +131,8 @@ class HudOverlay:
         if not self._canvas:
             return
 
-        cx, cy = target.centroid_x, target.centroid_y
+        cx = target.centroid_x - self._min_x
+        cy = target.centroid_y - self._min_y
         w2 = BADGE_WIDTH // 2
         h2 = BADGE_HEIGHT // 2
         x0, y0 = cx - w2, cy - h2

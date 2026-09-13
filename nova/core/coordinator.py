@@ -71,35 +71,51 @@ class TagSnapCoordinator:
         logger.debug("Coordinator evaluating phrase: '%s'", phrase)
 
         with self._lock:
-            # 1. Tag / Scan Command (FR-006)
-            if phrase in ("tag", "scan"):
-                return self.trigger_tag_scan()
+            tokens = phrase.split()
+            if not tokens:
+                return False
 
-            # 2. Pagination Navigation (FR-007)
-            if phrase in ("next", "more"):
-                return self.page_next()
-            if phrase in ("back", "previous"):
-                return self.page_previous()
-
-            # 3. Action Modifiers (FR-012)
-            if phrase == "double":
-                self.driver.arm_modifier("double")
-                return True
-            if phrase == "right":
-                self.driver.arm_modifier("right")
-                return True
-
-            # 4. Direct In-Place Click (FR-010)
-            if phrase == "click":
-                return self.trigger_direct_click()
-
-            # 5. Emergency Dismissal / Halt (FR-021)
-            if phrase in ("halt", "cancel", "dismiss", "close"):
+            # 1. Emergency Dismissal / Halt (FR-021)
+            if any(t in ("halt", "cancel", "dismiss", "close") for t in tokens):
                 self.dismiss_hud()
                 return True
 
+            # 2. Tag / Scan Command (FR-006)
+            # Matches "tag", "scan", "hey tag", "nova tag", "tag it", etc.
+            if any(t in ("tag", "scan") for t in tokens):
+                return self.trigger_tag_scan()
+
+            # 3. Pagination Navigation (FR-007)
+            if any(t in ("next", "more") for t in tokens):
+                return self.page_next()
+            if any(t in ("back", "previous") for t in tokens):
+                return self.page_previous()
+
+            # 4. Action Modifiers (FR-012)
+            has_double = "double" in tokens
+            has_right = "right" in tokens
+            if has_double:
+                self.driver.arm_modifier("double")
+            elif has_right:
+                self.driver.arm_modifier("right")
+
+            # 5. Direct In-Place Click (FR-010) or Target Selection with modifier
+            if "click" in tokens:
+                digit = None
+                for token in tokens:
+                    if token in SPOKEN_DIGIT_MAP:
+                        digit = SPOKEN_DIGIT_MAP[token]
+                        break
+                if digit is not None and self.hud.is_visible:
+                    return self.select_target_badge(digit)
+                return self.trigger_direct_click()
+
+            # If only modifier was spoken without digit
+            if (has_double or has_right) and not any(token in SPOKEN_DIGIT_MAP for token in tokens):
+                return True
+
             # 6. Single-Digit Badge Selection (FR-007, FR-009, FR-011)
-            for token in phrase.split():
+            for token in tokens:
                 if token in SPOKEN_DIGIT_MAP:
                     digit = SPOKEN_DIGIT_MAP[token]
                     return self.select_target_badge(digit)

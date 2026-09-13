@@ -149,6 +149,35 @@ class TestTagSnapIntegration(unittest.TestCase):
         self.assertFalse(self.hud.is_visible)
         self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
 
+    def test_prefixed_and_compound_speech_commands(self):
+        # 1. "hey tag" prefix handling (user reported bug)
+        handled = self.coordinator.handle_speech_phrase("hey tag")
+        self.root.update()
+        self.assertTrue(handled)
+        self.assertEqual(self.sm.current_state, SystemState.TRACKING)
+        self.assertTrue(self.hud.is_visible)
+
+        # 2. "cancel that" dismissal
+        handled_cancel = self.coordinator.handle_speech_phrase("cancel that")
+        self.root.update()
+        self.assertTrue(handled_cancel)
+        self.assertFalse(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+
+        # 3. "scan" variant
+        self.coordinator.handle_speech_phrase("nova scan")
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+
+        # 4. "right click 2" compound command
+        handled_right_click = self.coordinator.handle_speech_phrase("right click 2")
+        self.root.update()
+        self.assertTrue(handled_right_click)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+        self.assertFalse(self.hud.is_visible)
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[0][2], "right")
+
 
 if __name__ == "__main__":
     unittest.main()
