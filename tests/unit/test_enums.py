@@ -16,11 +16,13 @@ class TestCoreEnums(unittest.TestCase):
             "DICTATING",
             "TRACKING",
             "EXECUTING",
+            "GLIDE_ACTIVE",
+            "CROSSHAIR_ACTIVE",
             "ERROR",
         }
         actual_states = {state.value for state in SystemState}
         self.assertEqual(expected_states, actual_states)
-        self.assertEqual(len(SystemState), 8)
+        self.assertEqual(len(SystemState), 10)
 
     def test_mascot_visual_state_values(self):
         expected_visuals = {
@@ -45,6 +47,11 @@ class TestCoreEnums(unittest.TestCase):
             "DICTATION_START",
             "DICTATION_END",
             "ACTION_COMMITTED",
+            "IMPULSE_DETECTED",
+            "GLIDE_START",
+            "GLIDE_STOP",
+            "CROSSHAIR_START",
+            "CROSSHAIR_STOP",
             "AUDIO_STREAM_ERROR",
             "AUDIO_STREAM_RESTORED",
         }

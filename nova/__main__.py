@@ -1,16 +1,18 @@
 """
 Project NOVA - Main Desktop Companion Daemon Entrypoint
-Unites audio capture, offline speech recognition, state machine coordination,
-audio ducking, and the transparent Tkinter mascot UI.
+Unites audio capture, offline speech recognition, digital signal processing (transients & pitch),
+state machine coordination, audio ducking, and the transparent Tkinter mascot & HUD UI.
 """
 
 import argparse
 import logging
 import signal
+import threading
 import tkinter as tk
 from typing import Optional
 
 from nova.audio.capture import AudioCaptureManager
+from nova.audio.dsp import AcousticImpulseDetector, VoicedPitchTracker
 from nova.audio.ducking import AudioDuckingManager, play_audio_chime
 from nova.automation.crawler import UIAutomationCrawler
 from nova.core.coordinator import TagSnapCoordinator
@@ -44,14 +46,10 @@ class NovaApp:
         self._configure_logging()
         logger.info("Initializing Project NOVA Desktop Companion...")
 
-        # Core subsystems
+        # Core state machine & audio ducking
         self.state_machine = StateMachine(initial_state=SystemState.STANDBY)
         self.ducking_manager = AudioDuckingManager()
         self.audio_manager = AudioCaptureManager(device=self.device, on_error=self._on_audio_error)
-        self.speech_engine = VoskSpeechEngine(
-            model_path=self.model_path,
-            on_event=self._on_speech_event,
-        )
 
         # Tkinter UI
         enable_windows_dpi_awareness()
@@ -61,7 +59,7 @@ class NovaApp:
             reduced_motion=self.reduced_motion,
         )
 
-        # UI Automation & Input Subsystems (MOD-002)
+        # UI Automation & Input Subsystems (MOD-002 & MOD-003)
         self.crawler = UIAutomationCrawler()
         self.input_driver = InputDriver()
         self.hud = HudOverlay(root=self.root)
@@ -72,6 +70,23 @@ class NovaApp:
             driver=self.input_driver,
             reduced_motion=self.reduced_motion,
         )
+
+        # DSP Subsystems (MOD-003)
+        self.impulse_detector = AcousticImpulseDetector(
+            on_impulse=self._on_acoustic_impulse,
+        )
+        self.pitch_tracker = VoicedPitchTracker(
+            on_glide_tick=self._on_glide_tick,
+            on_glide_stop=self._on_glide_stop,
+        )
+        self.speech_engine = VoskSpeechEngine(
+            model_path=self.model_path,
+            on_event=self._on_speech_event,
+            on_speech_activity=self._on_speech_activity,
+        )
+
+        self._is_running = False
+        self._audio_thread: Optional[threading.Thread] = None
 
         self._bind_state_transitions()
         self._setup_shutdown_handlers()
@@ -89,6 +104,35 @@ class NovaApp:
             SystemEvent(event_type=SystemEventType.AUDIO_STREAM_ERROR)
         )
 
+    def _on_speech_activity(self) -> None:
+        """Plosive acoustic gating (FR-014): mute impulse detector on speech token."""
+        self.impulse_detector.notify_speech_detected()
+
+    def _on_acoustic_impulse(self) -> None:
+        """Dispatches detected acoustic impulse to coordinator on GUI thread."""
+        logger.info("Acoustic impulse detected in NovaApp.")
+        if self.root:
+            try:
+                self.root.after(0, self.coordinator.handle_impulse)
+            except Exception:
+                self.coordinator.handle_impulse()
+        else:
+            self.coordinator.handle_impulse()
+
+    def _on_glide_tick(self, dt: float) -> None:
+        """Advances glider step on GUI thread."""
+        if self.root:
+            try:
+                self.root.after(0, lambda: self.coordinator.glider.step(dt))
+            except Exception:
+                self.coordinator.glider.step(dt)
+        else:
+            self.coordinator.glider.step(dt)
+
+    def _on_glide_stop(self) -> None:
+        """Stops glider."""
+        self.coordinator.glider.stop_glide()
+
     def _on_speech_event(self, event: SystemEvent) -> None:
         logger.debug("Speech event received by coordinator: %s", event)
         if event.payload and "phrase" in event.payload:
@@ -104,6 +148,12 @@ class NovaApp:
 
             # Update Mascot visual appearance
             self.mascot.set_visual_state(self.state_machine.current_visual_state)
+
+            # Arm / disarm pitch tracker strictly for GLIDE_ACTIVE (FR-016)
+            if new_state == SystemState.GLIDE_ACTIVE:
+                self.pitch_tracker.arm()
+            else:
+                self.pitch_tracker.disarm()
 
             # Audio ducking gate (FR-005)
             if new_state in (SystemState.LISTENING, SystemState.DICTATING):
@@ -143,11 +193,39 @@ class NovaApp:
         except Exception:
             pass
 
+    def _audio_pipeline_loop(self) -> None:
+        """
+        Unified real-time audio pipeline thread.
+        Distributes raw PCM chunks to impulse detector (sub-25ms DSP),
+        voiced pitch tracker (autocorrelation), and speech recognizer.
+        """
+        logger.info("Audio pipeline processing loop started.")
+        while self._is_running:
+            chunk = self.audio_manager.get_chunk(timeout=0.05)
+            if not chunk:
+                continue
+
+            # 1. Sub-25ms Acoustic Impulse Detection (FR-013, NFR-001)
+            self.impulse_detector.process_pcm_chunk(chunk)
+
+            # 2. Voiced Vowel Pitch Gliding (FR-016)
+            self.pitch_tracker.process_pcm_chunk(chunk)
+
+            # 3. Speech Recognition Engine
+            self.speech_engine.process_pcm_chunk(chunk)
+
     def start(self) -> None:
         """Start background processing loops and enter the GUI event loop."""
-        logger.info("Starting audio capture and speech recognition worker...")
+        logger.info("Starting audio capture and pipeline worker...")
+        self._is_running = True
         self.audio_manager.start()
-        self.speech_engine.start(self.audio_manager)
+
+        self._audio_thread = threading.Thread(
+            target=self._audio_pipeline_loop,
+            name="NovaAudioPipeline",
+            daemon=True,
+        )
+        self._audio_thread.start()
 
         logger.info("Project NOVA is active and listening for wake words.")
         self.root.mainloop()
@@ -155,9 +233,15 @@ class NovaApp:
     def stop(self) -> None:
         """Stop all background workers and restore host system audio."""
         logger.info("Stopping Project NOVA subsystems...")
+        self._is_running = False
+        if self._audio_thread and self._audio_thread.is_alive():
+            self._audio_thread.join(timeout=1.0)
+            self._audio_thread = None
+
         self.speech_engine.stop()
         self.audio_manager.stop()
         self.ducking_manager.unduck()
+        self.coordinator.crosshair.destroy()
         self.mascot.destroy()
         self.hud.destroy()
         logger.info("All subsystems terminated cleanly.")

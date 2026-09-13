@@ -37,6 +37,8 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.DICTATING,
         SystemState.TRACKING,
         SystemState.EXECUTING,
+        SystemState.GLIDE_ACTIVE,
+        SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
         SystemState.IDLE_ACTIVE,
@@ -46,6 +48,8 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.EXECUTING,
         SystemState.DICTATING,
         SystemState.TRACKING,
+        SystemState.GLIDE_ACTIVE,
+        SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
         SystemState.LISTENING,
@@ -59,6 +63,8 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
     SystemState.TRACKING: {
         SystemState.EXECUTING,
         SystemState.IDLE_ACTIVE,
+        SystemState.GLIDE_ACTIVE,
+        SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
         SystemState.TRACKING,
@@ -66,8 +72,26 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
     SystemState.EXECUTING: {
         SystemState.IDLE_ACTIVE,
         SystemState.TRACKING,
+        SystemState.GLIDE_ACTIVE,
+        SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
+    },
+    SystemState.GLIDE_ACTIVE: {
+        SystemState.IDLE_ACTIVE,
+        SystemState.EXECUTING,
+        SystemState.CROSSHAIR_ACTIVE,
+        SystemState.STANDBY,
+        SystemState.ERROR,
+        SystemState.GLIDE_ACTIVE,
+    },
+    SystemState.CROSSHAIR_ACTIVE: {
+        SystemState.IDLE_ACTIVE,
+        SystemState.EXECUTING,
+        SystemState.GLIDE_ACTIVE,
+        SystemState.STANDBY,
+        SystemState.ERROR,
+        SystemState.CROSSHAIR_ACTIVE,
     },
     SystemState.ERROR: {
         SystemState.STANDBY,
@@ -84,6 +108,8 @@ STATE_TO_VISUAL_MAP: Dict[SystemState, MascotVisualState] = {
     SystemState.DICTATING: MascotVisualState.DICTATING,
     SystemState.TRACKING: MascotVisualState.TRACKING,
     SystemState.EXECUTING: MascotVisualState.EXECUTING,
+    SystemState.GLIDE_ACTIVE: MascotVisualState.TRACKING,
+    SystemState.CROSSHAIR_ACTIVE: MascotVisualState.TRACKING,
     SystemState.ERROR: MascotVisualState.ERROR,
 }
 
@@ -184,6 +210,18 @@ class StateMachine:
 
             if event.event_type == SystemEventType.ACTION_COMMITTED:
                 return self.transition_to(SystemState.EXECUTING)
+
+            if event.event_type == SystemEventType.GLIDE_START:
+                return self.transition_to(SystemState.GLIDE_ACTIVE)
+
+            if event.event_type == SystemEventType.GLIDE_STOP:
+                return self.transition_to(SystemState.IDLE_ACTIVE)
+
+            if event.event_type == SystemEventType.CROSSHAIR_START:
+                return self.transition_to(SystemState.CROSSHAIR_ACTIVE)
+
+            if event.event_type == SystemEventType.CROSSHAIR_STOP:
+                return self.transition_to(SystemState.IDLE_ACTIVE)
 
             logger.debug("Unhandled event type %s in state %s", event.event_type, current)
             return False

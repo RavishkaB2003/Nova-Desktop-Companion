@@ -23,6 +23,9 @@ DEFAULT_GRAMMAR = [
     "tag", "scan", "click", "double", "right",
     "next", "more", "back", "previous",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "crosshair", "lock", "hit",
+    "glide", "canvas", "draw",
+    "left", "up", "down",
     "[unk]",
 ]
 DEFAULT_SAMPLE_RATE = 16000
@@ -53,11 +56,13 @@ class VoskSpeechEngine:
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         grammar: Optional[List[str]] = None,
         on_event: Optional[Callable[[SystemEvent], None]] = None,
+        on_speech_activity: Optional[Callable[[], None]] = None,
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
     ) -> None:
         self.sample_rate = sample_rate
         self.grammar = grammar or DEFAULT_GRAMMAR
         self.on_event = on_event
+        self.on_speech_activity = on_speech_activity
         self.debounce_seconds = debounce_seconds
 
         self._resolved_model_path = model_path or find_default_model_path()
@@ -114,12 +119,16 @@ class VoskSpeechEngine:
                     result_json = json.loads(self._recognizer.Result())
                     text = result_json.get("text", "").strip().lower()
                     if text:
+                        if self.on_speech_activity:
+                            self.on_speech_activity()
                         self._handle_recognized_text(text)
                         return text
                 else:
                     partial_json = json.loads(self._recognizer.PartialResult())
                     partial_text = partial_json.get("partial", "").strip().lower()
                     if partial_text:
+                        if self.on_speech_activity:
+                            self.on_speech_activity()
                         # Instant trigger on partial matches for low-latency responsiveness
                         words = partial_text.split()
                         if any(w in partial_text for w in ["wake up nova", "hey nova", "wake up", "activate"]):
@@ -139,6 +148,11 @@ class VoskSpeechEngine:
                             return partial_text
                         if any(w in words for w in ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]):
                             logger.info("Instant digit recognized: '%s'", partial_text)
+                            self._handle_recognized_text(partial_text)
+                            self._recognizer.Reset()
+                            return partial_text
+                        if any(w in words for w in ["crosshair", "lock", "hit", "glide", "canvas", "draw", "left", "up", "down"]):
+                            logger.info("Instant glide/crosshair command recognized: '%s'", partial_text)
                             self._handle_recognized_text(partial_text)
                             self._recognizer.Reset()
                             return partial_text

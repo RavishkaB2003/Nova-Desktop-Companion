@@ -54,6 +54,10 @@ class HudOverlay:
         return self._is_visible
 
     @property
+    def root(self) -> Optional[tk.Tk]:
+        return self._root
+
+    @property
     def window(self) -> Optional[tk.Tk | tk.Toplevel]:
         return self._window
 
