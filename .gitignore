@@ -1,0 +1,36 @@
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build, distribution and packaging outputs
+build/
+dist/
+*.manifest
+*.spec
+
+# Offline acoustic models (downloaded via scripts/download_model.py)
+models/vosk-model-*/
+models/*.zip
+models/*.tar.gz
+!models/.gitkeep
+
+# Environment variables
+.env*
+!.env.example
+
+# Editor and OS caches
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

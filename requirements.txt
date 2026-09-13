@@ -1,0 +1,8 @@
+# Project NOVA Dependencies
+# Python 3.10+ on Windows 10/11 x64
+
+sounddevice>=0.4.6
+vosk>=0.3.45
+pywin32>=306
+uiautomation>=2.0.18
+Pillow>=10.0.0

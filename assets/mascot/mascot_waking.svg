@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Project NOVA Mascot: State = Waking -->
+  
+  <g transform="rotate(0, 128, 180)">
+    <!-- Legs -->
+    <rect x="88" y="208" width="24" height="28" rx="8" fill="#D0D7DE" />
+    <rect x="144" y="208" width="24" height="28" rx="8" fill="#D0D7DE" />
+    <rect x="91" y="230" width="18" height="6" rx="3" fill="#B0BAC4" />
+    <rect x="147" y="230" width="18" height="6" rx="3" fill="#B0BAC4" />
+    <rect x="84" y="232" width="32" height="10" rx="5" fill="#C0C8D0" />
+    <rect x="140" y="232" width="32" height="10" rx="5" fill="#C0C8D0" />
+
+    <!-- Torso -->
+    <rect x="72" y="148" width="112" height="68" rx="16" fill="#F8F9FA" />
+    <rect x="72" y="196" width="112" height="20" rx="16" fill="#D0D7DE" />
+    <rect x="72" y="164" width="10" height="6" rx="3" fill="#D0D7DE" />
+    <rect x="72" y="176" width="10" height="6" rx="3" fill="#D0D7DE" />
+    <rect x="174" y="164" width="10" height="6" rx="3" fill="#D0D7DE" />
+    <rect x="174" y="176" width="10" height="6" rx="3" fill="#D0D7DE" />
+
+    <!-- Chest display panel -->
+    <rect x="88" y="158" width="80" height="48" rx="8" fill="#1A1D20" />
+    <rect x="90" y="160" width="76" height="44" rx="6" fill="#0D1520" stroke="#00F0FF" stroke-width="1" stroke-opacity="0.5" />
+    <g transform="translate(128, 184)">
+      <rect x="-21" y="-4" width="6" height="8" rx="2" fill="#38BDF8" opacity="0.9" />
+      <rect x="-12" y="-7" width="6" height="14" rx="2" fill="#38BDF8" opacity="0.9" />
+      <rect x="-3" y="-10" width="6" height="20" rx="2" fill="#38BDF8" opacity="0.9" />
+      <rect x="6" y="-5" width="6" height="10" rx="2" fill="#38BDF8" opacity="0.9" />
+      <rect x="15" y="-4" width="6" height="8" rx="2" fill="#38BDF8" opacity="0.9" />
+    </g>
+
+    <!-- Arms -->
+    <rect x="44" y="152" width="30" height="52" rx="14" fill="#F8F9FA" />
+    <rect x="44" y="186" width="30" height="18" rx="9" fill="#D0D7DE" />
+    <ellipse cx="59" cy="210" rx="12" ry="10" fill="#E8EAEC" />
+
+    <rect x="182" y="152" width="30" height="52" rx="14" fill="#F8F9FA" />
+    <rect x="182" y="186" width="30" height="18" rx="9" fill="#D0D7DE" />
+    <ellipse cx="197" cy="210" rx="12" ry="10" fill="#E8EAEC" />
+
+    <!-- Neck -->
+    <rect x="108" y="134" width="40" height="20" rx="8" fill="#E0E3E6" />
+    <rect x="112" y="138" width="32" height="12" rx="6" fill="#D0D7DE" />
+
+    <!-- Head / Helmet -->
+    <ellipse cx="128" cy="100" rx="68" ry="62" fill="#F8F9FA" />
+    <rect x="62" y="110" width="132" height="32" rx="0" fill="#F8F9FA" />
+    <rect x="60" y="124" width="136" height="24" rx="4" fill="#EAECEF" />
+    <ellipse cx="128" cy="50" rx="48" ry="18" fill="#EAECEF" />
+    <ellipse cx="128" cy="48" rx="40" ry="14" fill="#F8F9FA" />
+
+    <!-- Antennas -->
+    <rect x="84" y="32" width="6" height="28" rx="3" fill="#D0D7DE" />
+    <ellipse cx="87" cy="28" rx="7" ry="7" fill="#00F0FF" />
+    <rect x="166" y="32" width="6" height="28" rx="3" fill="#D0D7DE" />
+    <ellipse cx="169" cy="28" rx="7" ry="7" fill="#00F0FF" />
+
+    <!-- Visor Faceplate -->
+    <rect x="68" y="106" width="120" height="64" rx="16" fill="#2A2D32" />
+    <rect x="72" y="110" width="112" height="56" rx="12" fill="#1A1D20" />
+    <path d="M78 116 Q108 112 128 118" stroke="rgba(255,255,255,0.12)" stroke-width="2" fill="none" stroke-linecap="round" />
+
+    <!-- Eyes -->
+    <g transform="translate(100, 138)">
+      <circle cx="0" cy="0" r="8" fill="#00F0FF" opacity="0.9" /><circle cx="0" cy="0" r="4" fill="#0A0E17" />
+    </g>
+    <g transform="translate(156, 138)">
+      <circle cx="0" cy="0" r="8" fill="#00F0FF" opacity="0.9" /><circle cx="0" cy="0" r="4" fill="#0A0E17" />
+    </g>
+
+    <!-- Mouth -->
+    <path d="M 108 158 Q 128 166 148 158" stroke="rgba(255,255,255,0.25)" stroke-width="2" fill="none" stroke-linecap="round" />
+  </g>
+</svg>
