@@ -17,7 +17,14 @@ from nova.core.state_machine import SystemEvent
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GRAMMAR = ["hey nova", "wake up", "nova", "sleep", "halt", "cancel", "[unk]"]
+DEFAULT_GRAMMAR = [
+    "hey nova", "wake up", "nova", "sleep", "halt", "cancel",
+    "tag", "scan", "click", "double", "right",
+    "next", "more", "back", "previous",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "[unk]",
+]
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_DEBOUNCE_SECONDS = 0.25
 

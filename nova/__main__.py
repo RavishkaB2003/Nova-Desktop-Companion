@@ -12,9 +12,13 @@ from typing import Optional
 
 from nova.audio.capture import AudioCaptureManager
 from nova.audio.ducking import AudioDuckingManager, play_audio_chime
+from nova.automation.crawler import UIAutomationCrawler
+from nova.core.coordinator import TagSnapCoordinator
 from nova.core.enums import SystemEventType, SystemState
 from nova.core.state_machine import StateMachine, SystemEvent
+from nova.input.driver import InputDriver
 from nova.speech.vosk_engine import VoskSpeechEngine
+from nova.ui.hud_overlay import HudOverlay
 from nova.ui.mascot import MascotWidget, enable_windows_dpi_awareness
 
 logger = logging.getLogger("nova")
@@ -55,6 +59,18 @@ class NovaApp:
             reduced_motion=self.reduced_motion,
         )
 
+        # UI Automation & Input Subsystems (MOD-002)
+        self.crawler = UIAutomationCrawler()
+        self.input_driver = InputDriver()
+        self.hud = HudOverlay(root=self.root)
+        self.coordinator = TagSnapCoordinator(
+            state_machine=self.state_machine,
+            crawler=self.crawler,
+            hud=self.hud,
+            driver=self.input_driver,
+            reduced_motion=self.reduced_motion,
+        )
+
         self._bind_state_transitions()
         self._setup_shutdown_handlers()
 
@@ -73,6 +89,10 @@ class NovaApp:
 
     def _on_speech_event(self, event: SystemEvent) -> None:
         logger.debug("Speech event received by coordinator: %s", event)
+        if event.payload and "phrase" in event.payload:
+            phrase = event.payload["phrase"]
+            if self.coordinator.handle_speech_phrase(phrase):
+                return
         self.state_machine.handle_event(event)
 
     def _bind_state_transitions(self) -> None:
@@ -137,6 +157,7 @@ class NovaApp:
         self.audio_manager.stop()
         self.ducking_manager.unduck()
         self.mascot.destroy()
+        self.hud.destroy()
         logger.info("All subsystems terminated cleanly.")
 
 
