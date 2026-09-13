@@ -18,7 +18,8 @@ from nova.core.state_machine import SystemEvent
 logger = logging.getLogger(__name__)
 
 DEFAULT_GRAMMAR = [
-    "hey nova", "wake up", "nova", "sleep", "halt", "cancel",
+    "wake up nova", "hey nova", "wake up", "nova", "activate",
+    "go to sleep", "sleep", "halt", "cancel",
     "tag", "scan", "click", "double", "right",
     "next", "more", "back", "previous",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -102,7 +103,7 @@ class VoskSpeechEngine:
     def process_pcm_chunk(self, chunk: bytes) -> Optional[str]:
         """
         Feed a raw 16kHz mono 16-bit PCM chunk into the recognizer.
-        Returns recognized phrase text if a complete utterance boundary is detected.
+        Returns recognized phrase text if a complete utterance or instant partial match is detected.
         """
         if not chunk or not self._recognizer:
             return None
@@ -115,6 +116,32 @@ class VoskSpeechEngine:
                     if text:
                         self._handle_recognized_text(text)
                         return text
+                else:
+                    partial_json = json.loads(self._recognizer.PartialResult())
+                    partial_text = partial_json.get("partial", "").strip().lower()
+                    if partial_text:
+                        # Instant trigger on partial matches for low-latency responsiveness
+                        words = partial_text.split()
+                        if any(w in partial_text for w in ["wake up nova", "hey nova", "wake up", "activate"]):
+                            logger.info("Instant wake word recognized: '%s'", partial_text)
+                            self._handle_recognized_text(partial_text)
+                            self._recognizer.Reset()
+                            return partial_text
+                        if any(w in partial_text for w in ["go to sleep", "sleep", "halt", "cancel"]):
+                            logger.info("Instant control phrase recognized: '%s'", partial_text)
+                            self._handle_recognized_text(partial_text)
+                            self._recognizer.Reset()
+                            return partial_text
+                        if any(w in words for w in ["tag", "scan", "click", "double", "right", "next", "more", "back", "previous"]):
+                            logger.info("Instant navigation command recognized: '%s'", partial_text)
+                            self._handle_recognized_text(partial_text)
+                            self._recognizer.Reset()
+                            return partial_text
+                        if any(w in words for w in ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]):
+                            logger.info("Instant digit recognized: '%s'", partial_text)
+                            self._handle_recognized_text(partial_text)
+                            self._recognizer.Reset()
+                            return partial_text
             except Exception as exc:
                 logger.error("Error during speech recognition decoding: %s", exc)
         return None
@@ -130,12 +157,12 @@ class VoskSpeechEngine:
         logger.info("Speech recognized utterance: '%s'", text)
 
         event: Optional[SystemEvent] = None
-        if any(w in text for w in ["hey nova", "wake up", "nova"]):
+        if any(w in text for w in ["wake up nova", "hey nova", "wake up", "nova", "activate"]):
             event = SystemEvent(
                 event_type=SystemEventType.WAKE_WORD_DETECTED,
                 payload={"phrase": text},
             )
-        elif "sleep" in text:
+        elif any(w in text for w in ["go to sleep", "sleep"]):
             event = SystemEvent(
                 event_type=SystemEventType.SLEEP_TRIGGERED,
                 payload={"phrase": text},

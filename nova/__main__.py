@@ -34,10 +34,12 @@ class NovaApp:
         debug: bool = False,
         reduced_motion: bool = False,
         model_path: Optional[str] = None,
+        device: Optional[str] = None,
     ) -> None:
         self.debug = debug
         self.reduced_motion = reduced_motion
         self.model_path = model_path
+        self.device = device
 
         self._configure_logging()
         logger.info("Initializing Project NOVA Desktop Companion...")
@@ -45,7 +47,7 @@ class NovaApp:
         # Core subsystems
         self.state_machine = StateMachine(initial_state=SystemState.STANDBY)
         self.ducking_manager = AudioDuckingManager()
-        self.audio_manager = AudioCaptureManager(on_error=self._on_audio_error)
+        self.audio_manager = AudioCaptureManager(device=self.device, on_error=self._on_audio_error)
         self.speech_engine = VoskSpeechEngine(
             model_path=self.model_path,
             on_event=self._on_speech_event,
@@ -170,6 +172,7 @@ def parse_args() -> argparse.Namespace:
         help="Disable ambient floating and motion animations (WCAG 2.2 AA)",
     )
     parser.add_argument("--model-path", type=str, default=None, help="Path to offline Vosk acoustic model")
+    parser.add_argument("--device", type=str, default=None, help="Input microphone device ID or name substring")
     return parser.parse_args()
 
 
@@ -179,6 +182,7 @@ def main() -> None:
         debug=args.debug,
         reduced_motion=args.reduced_motion,
         model_path=args.model_path,
+        device=args.device,
     )
     try:
         app.start()

@@ -18,6 +18,60 @@ DTYPE = "int16"
 QUEUE_MAX_SIZE = 50  # 5 seconds maximum backlog before dropping oldest chunk
 
 
+def find_best_input_device(preferred: Optional[Any] = None) -> Optional[int]:
+    """
+    Select the optimal input device for microphone audio capture.
+    If preferred is supplied (integer index or string name match), attempts to resolve it.
+    Otherwise, inspects available devices to avoid virtual or inactive webcam drivers.
+    """
+    try:
+        import sounddevice as sd
+        devices = sd.query_devices()
+
+        if preferred is not None:
+            try:
+                pref_idx = int(preferred)
+                if 0 <= pref_idx < len(devices) and devices[pref_idx].get("max_input_channels", 0) > 0:
+                    return pref_idx
+            except ValueError:
+                pref_lower = str(preferred).lower()
+                for idx, dev in enumerate(devices):
+                    if dev.get("max_input_channels", 0) > 0 and pref_lower in dev.get("name", "").lower():
+                        return idx
+                logger.warning("Preferred audio device '%s' not found. Falling back to auto-selection.", preferred)
+
+        default_id = sd.default.device[0]
+        if 0 <= default_id < len(devices):
+            def_name = devices[default_id].get("name", "").lower()
+            is_virtual = any(v in def_name for v in ["iriun", "virtual", "cable", "vac", "mapper"])
+            if not is_virtual:
+                return default_id
+            logger.info(
+                "System default audio device [%d] '%s' is a virtual driver. Searching for physical microphone...",
+                default_id,
+                devices[default_id].get("name", ""),
+            )
+
+        candidates = []
+        for idx, dev in enumerate(devices):
+            if dev.get("max_input_channels", 0) > 0:
+                name = dev.get("name", "").lower()
+                if not any(v in name for v in ["iriun", "virtual", "cable", "vac", "mapper", "primary"]):
+                    candidates.append((idx, dev.get("name", "")))
+
+        # Prefer array or realtek hardware mics
+        for idx, name in candidates:
+            name_lower = name.lower()
+            if "array" in name_lower or "realtek" in name_lower:
+                return idx
+        if candidates:
+            return candidates[0][0]
+        return default_id if default_id >= 0 else None
+    except Exception as exc:
+        logger.debug("Failed during audio input device discovery: %s", exc)
+        return None
+
+
 class AudioCaptureManager:
     """
     Manages continuous microphone stream capture into thread-safe ephemeral queues.
@@ -29,11 +83,13 @@ class AudioCaptureManager:
         sample_rate: int = SAMPLE_RATE_HZ,
         block_size: int = BLOCK_SIZE_SAMPLES,
         channels: int = CHANNELS,
+        device: Optional[Any] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.block_size = block_size
         self.channels = channels
+        self.device = device
         self.on_error = on_error
 
         self._audio_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=QUEUE_MAX_SIZE)
@@ -77,11 +133,17 @@ class AudioCaptureManager:
             try:
                 import sounddevice as sd
 
+                selected_device = find_best_input_device(self.device)
+                if selected_device is not None:
+                    dev_info = sd.query_devices(selected_device)
+                    logger.info("Selected audio input device: [%d] %s", selected_device, dev_info.get("name"))
+
                 self._stream = sd.RawInputStream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
                     channels=self.channels,
                     dtype=DTYPE,
+                    device=selected_device,
                     callback=self._audio_callback,
                 )
                 self._stream.start()
