@@ -137,6 +137,9 @@ class MascotWidget:
         )
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
+        self._root.deiconify()
+        self._root.lift()
+
     def _load_vector_assets(self) -> None:
         """Load and rasterize the approved SVG assets for all 7 states into 256x256 images."""
         try:

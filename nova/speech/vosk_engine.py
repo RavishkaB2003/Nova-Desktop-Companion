@@ -22,7 +22,6 @@ DEFAULT_GRAMMAR = [
     "tag", "scan", "click", "double", "right",
     "next", "more", "back", "previous",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "1", "2", "3", "4", "5", "6", "7", "8", "9",
     "[unk]",
 ]
 DEFAULT_SAMPLE_RATE = 16000

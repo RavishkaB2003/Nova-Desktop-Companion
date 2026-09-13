@@ -36,6 +36,7 @@ class HudOverlay:
     def __init__(self, root: Optional[tk.Tk] = None) -> None:
         self._root = root
         self._owns_root = root is None
+        self._window: Optional[tk.Tk | tk.Toplevel] = None
         self._canvas: Optional[tk.Canvas] = None
         self._is_visible = False
         self._is_destroyed = False
@@ -50,29 +51,38 @@ class HudOverlay:
     def is_visible(self) -> bool:
         return self._is_visible
 
+    @property
+    def window(self) -> Optional[tk.Tk | tk.Toplevel]:
+        return self._window
+
     def _init_overlay_window(self) -> None:
         """Create frameless, transparent, click-through capable topmost overlay."""
         if self._root is None:
             self._root = tk.Tk()
+            self._window = self._root
+            self._owns_root = True
+        else:
+            self._window = tk.Toplevel(self._root)
+            self._owns_root = False
 
-        self._root.title("NOVA Target Snapping HUD")
-        self._root.overrideredirect(True)
-        self._root.attributes("-topmost", True)
+        self._window.title("NOVA Target Snapping HUD")
+        self._window.overrideredirect(True)
+        self._window.attributes("-topmost", True)
 
         min_x, min_y, max_x, max_y = get_virtual_desktop_bounds()
         width = max(100, max_x - min_x)
         height = max(100, max_y - min_y)
 
-        self._root.geometry(f"{width}x{height}+{min_x}+{min_y}")
+        self._window.geometry(f"{width}x{height}+{min_x}+{min_y}")
 
         try:
-            self._root.wm_attributes("-transparentcolor", TRANSPARENT_COLORKEY)
-            self._root.config(bg=TRANSPARENT_COLORKEY)
+            self._window.wm_attributes("-transparentcolor", TRANSPARENT_COLORKEY)
+            self._window.config(bg=TRANSPARENT_COLORKEY)
         except Exception as exc:
             logger.debug("Transparent colorkey not supported on host OS: %s", exc)
 
         self._canvas = tk.Canvas(
-            self._root,
+            self._window,
             width=width,
             height=height,
             bg=TRANSPARENT_COLORKEY,
@@ -82,7 +92,7 @@ class HudOverlay:
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
         # Initially hidden
-        self._root.withdraw()
+        self._window.withdraw()
 
     def show_targets(
         self,
@@ -91,7 +101,7 @@ class HudOverlay:
         total_pages: int = 1,
     ) -> None:
         """Project badges 1..9 for the current target page."""
-        if self._is_destroyed or not self._canvas or not self._root:
+        if self._is_destroyed or not self._canvas or not self._window:
             return
 
         def _render() -> None:
@@ -104,12 +114,12 @@ class HudOverlay:
             if total_pages > 1:
                 self._draw_pagination_footer(current_page, total_pages)
 
-            self._root.deiconify()
-            self._root.lift()
+            self._window.deiconify()
+            self._window.lift()
             self._is_visible = True
             logger.info("Projected %d HUD target badges (Page %d/%d).", len(targets), current_page + 1, total_pages)
 
-        self._root.after(0, _render)
+        self._window.after(0, _render)
 
     def _draw_badge(self, target: UIElementTarget, locked: bool = False) -> None:
         """Draw an individual 58x38px obsidian target badge centered on (centroid_x, centroid_y)."""
@@ -178,7 +188,7 @@ class HudOverlay:
 
     def highlight_target(self, target_id: int) -> None:
         """Lock and highlight selected target in golden amber (#FFB800) during cursor glide."""
-        if self._is_destroyed or not self._canvas or not self._root:
+        if self._is_destroyed or not self._canvas or not self._window:
             return
 
         def _highlight() -> None:
@@ -190,7 +200,7 @@ class HudOverlay:
                         self._canvas.delete(tag_id)
                 self._draw_badge(target, locked=True)
 
-        self._root.after(0, _highlight)
+        self._window.after(0, _highlight)
 
     def clear(self) -> None:
         """Erase all active badges and footers from canvas."""
@@ -209,16 +219,16 @@ class HudOverlay:
 
     def hide(self) -> None:
         """Dismiss HUD overlay instantly."""
-        if self._is_destroyed or not self._root:
+        if self._is_destroyed or not self._window:
             return
 
         def _hide() -> None:
             self.clear()
-            self._root.withdraw()
+            self._window.withdraw()
             self._is_visible = False
             logger.info("HUD target overlay dismissed.")
 
-        self._root.after(0, _hide)
+        self._window.after(0, _hide)
 
     def destroy(self) -> None:
         """Clean up overlay window resources."""
@@ -230,3 +240,10 @@ class HudOverlay:
             except Exception:
                 pass
             self._root = None
+            self._window = None
+        elif self._window:
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
+            self._window = None
