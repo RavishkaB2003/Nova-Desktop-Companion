@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GRAMMAR = [
     "wake up nova", "hey nova", "wake up", "nova", "activate",
-    "go to sleep", "sleep", "halt", "cancel",
+    "go to sleep", "sleep", "halt", "cancel", "done", "close", "dismiss",
     "tag", "scan", "click", "double", "right",
     "next", "more", "back", "previous",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -127,7 +127,7 @@ class VoskSpeechEngine:
                             self._handle_recognized_text(partial_text)
                             self._recognizer.Reset()
                             return partial_text
-                        if any(w in partial_text for w in ["go to sleep", "sleep", "halt", "cancel"]):
+                        if any(w in partial_text for w in ["go to sleep", "sleep", "halt", "cancel", "done", "close", "dismiss"]):
                             logger.info("Instant control phrase recognized: '%s'", partial_text)
                             self._handle_recognized_text(partial_text)
                             self._recognizer.Reset()

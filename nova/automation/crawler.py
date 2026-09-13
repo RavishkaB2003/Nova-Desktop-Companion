@@ -33,6 +33,35 @@ class UIElementTarget:
     native_element: Optional[Any] = None
 
 
+def wake_chromium_accessibility(hwnd: int) -> None:
+    """
+    Chromium/Electron applications (VS Code, Chrome, Edge, Slack, Teams) keep their
+    internal accessibility DOM tree dormant by default to save resources.
+    Calling AccessibleObjectFromWindow with OBJID_CLIENT signals Chromium to initialize
+    BrowserAccessibilityManager and expose all web controls (tabs, files, buttons).
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        oleacc = ctypes.windll.oleacc
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_byte * 8),
+            ]
+
+        IID_IAccessible = GUID(
+            0x618736E0, 0x3C3D, 0x11CF, (ctypes.c_byte * 8)(0x81, 0x0C, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71)
+        )
+        p_acc = ctypes.c_void_p()
+        oleacc.AccessibleObjectFromWindow(hwnd, -4, ctypes.byref(IID_IAccessible), ctypes.byref(p_acc))
+    except Exception as exc:
+        logger.debug("Chromium accessibility wake-up notification skipped: %s", exc)
+
+
 class UIAutomationCrawler:
     """
     Crawls Windows UI Automation accessibility tree to identify actionable elements.
@@ -90,6 +119,9 @@ class UIAutomationCrawler:
                     logger.debug("No active foreground window found for UI Automation query.")
                     return []
 
+                # Signal Chromium/Electron to activate its accessibility tree
+                wake_chromium_accessibility(hwnd)
+
                 ctrl = auto.ControlFromHandle(hwnd)
                 if not ctrl:
                     logger.debug("Failed to acquire UI Automation control from HWND %s", hwnd)
@@ -142,67 +174,71 @@ class UIAutomationCrawler:
         if depth > MAX_TRAVERSAL_DEPTH or len(accumulator) >= MAX_TARGET_ACCUMULATION:
             return
 
+        # 1. Safely inspect current node without letting property errors abort tree traversal
         try:
             rect = ctrl.BoundingRectangle
-            width = rect.right - rect.left
-            height = rect.bottom - rect.top
+            if rect:
+                width = rect.right - rect.left
+                height = rect.bottom - rect.top
 
-            # Only consider elements with valid, visible dimensions
-            if width >= MIN_CONTROL_WIDTH_PX and height >= MIN_CONTROL_HEIGHT_PX:
-                ctype = getattr(ctrl, "ControlTypeName", "")
-                name = getattr(ctrl, "Name", "") or ""
+                if width >= MIN_CONTROL_WIDTH_PX and height >= MIN_CONTROL_HEIGHT_PX:
+                    ctype = getattr(ctrl, "ControlTypeName", "")
+                    name = getattr(ctrl, "Name", "") or ""
 
-                # Target clickable and actionable control types
-                interactive_types = {
-                    "ButtonControl",
-                    "MenuItemControl",
-                    "HyperlinkControl",
-                    "CheckBoxControl",
-                    "RadioButtonControl",
-                    "EditControl",
-                    "TabItemControl",
-                    "ListItemControl",
-                    "TreeItemControl",
-                    "ComboBoxControl",
-                    "SplitButtonControl",
-                    "CustomControl",
-                }
+                    interactive_types = {
+                        "ButtonControl",
+                        "MenuItemControl",
+                        "HyperlinkControl",
+                        "CheckBoxControl",
+                        "RadioButtonControl",
+                        "EditControl",
+                        "TabItemControl",
+                        "ListItemControl",
+                        "TreeItemControl",
+                        "ComboBoxControl",
+                        "SplitButtonControl",
+                        "CustomControl",
+                        "DataItemControl",
+                        "HeaderItemControl",
+                    }
 
-                has_action = (
-                    ctype in interactive_types
-                    or (hasattr(ctrl, "GetInvokePattern") and ctrl.GetInvokePattern())
-                    or (hasattr(ctrl, "GetTogglePattern") and ctrl.GetTogglePattern())
-                    or (hasattr(ctrl, "GetSelectionItemPattern") and ctrl.GetSelectionItemPattern())
-                )
-
-                if has_action and (name or ctype != "CustomControl"):
-                    cx = rect.left + (width // 2)
-                    cy = rect.top + (height // 2)
-                    accumulator.append(
-                        UIElementTarget(
-                            target_id=len(accumulator) + 1,
-                            title=name[:40],
-                            control_type=ctype,
-                            bounding_box=(rect.left, rect.top, rect.right, rect.bottom),
-                            centroid_x=cx,
-                            centroid_y=cy,
-                            page_index=0,
-                            window_handle=hwnd,
-                            native_element=ctrl,
-                        )
+                    has_action = (
+                        ctype in interactive_types
+                        or (hasattr(ctrl, "GetInvokePattern") and ctrl.GetInvokePattern())
+                        or (hasattr(ctrl, "GetTogglePattern") and ctrl.GetTogglePattern())
+                        or (hasattr(ctrl, "GetSelectionItemPattern") and ctrl.GetSelectionItemPattern())
                     )
 
-            if len(accumulator) >= MAX_TARGET_ACCUMULATION:
-                return
+                    if has_action and (name or ctype != "CustomControl"):
+                        cx = rect.left + (width // 2)
+                        cy = rect.top + (height // 2)
+                        accumulator.append(
+                            UIElementTarget(
+                                target_id=len(accumulator) + 1,
+                                title=name[:40],
+                                control_type=ctype,
+                                bounding_box=(rect.left, rect.top, rect.right, rect.bottom),
+                                centroid_x=cx,
+                                centroid_y=cy,
+                                page_index=0,
+                                window_handle=hwnd,
+                                native_element=ctrl,
+                            )
+                        )
+        except Exception:
+            pass
 
-            # Traverse children
+        if len(accumulator) >= MAX_TARGET_ACCUMULATION:
+            return
+
+        # 2. Independently traverse children so container errors never prune the subtree
+        try:
             for child in ctrl.GetChildren():
                 self._traverse_control(child, hwnd, depth + 1, accumulator)
                 if len(accumulator) >= MAX_TARGET_ACCUMULATION:
                     break
-
         except Exception as exc:
-            logger.debug("Skipping unreadable control node at depth %d: %s", depth, exc)
+            logger.debug("Skipping unreadable child nodes at depth %d: %s", depth, exc)
 
     def revalidate_target(
         self,

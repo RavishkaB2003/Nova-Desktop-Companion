@@ -96,22 +96,35 @@ class TestTagSnapIntegration(unittest.TestCase):
         # 4. Arm modifier "double"
         self.coordinator.handle_speech_phrase("double")
 
-        # 5. Select digit "3"
+        # 5. Aim at digit "3" (Option 1: Two-step Aim-then-Click)
         handled_digit = self.coordinator.handle_speech_phrase("3")
         self.root.update()
 
         self.assertTrue(handled_digit)
-        # End state returns to IDLE_ACTIVE
-        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
-        self.assertFalse(self.hud.is_visible)
+        # Option 1: HUD remains visible after aiming so user can confirm or re-aim
+        self.assertTrue(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.TRACKING)
 
         # Verify cursor glide reached Target 3 centroid (340, 120)
         self.assertTrue(len(self.driver.injected_glides) > 0)
         self.assertEqual(self.driver.injected_glides[-1], (340, 120))
 
-        # Verify double-click was dispatched
+        # 6. Confirm click with "click"
+        handled_click = self.coordinator.handle_speech_phrase("click")
+        self.root.update()
+        self.assertTrue(handled_click)
+
+        # Verify double-click was dispatched at (340, 120)
         self.assertEqual(len(self.driver.injected_clicks), 1)
         self.assertEqual(self.driver.injected_clicks[0], (340, 120, "left", 2))
+        # HUD stays active for sequential actions
+        self.assertTrue(self.hud.is_visible)
+
+        # 7. Dismiss HUD with "done"
+        self.coordinator.handle_speech_phrase("done")
+        self.root.update()
+        self.assertFalse(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
 
     def test_stale_target_revalidation_guard(self):
         # Trigger "tag"
@@ -128,7 +141,6 @@ class TestTagSnapIntegration(unittest.TestCase):
 
         # Action must be aborted (FR-011)
         self.assertFalse(handled)
-        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
         self.assertFalse(self.hud.is_visible)
         # Zero clicks should have been dispatched
         self.assertEqual(len(self.driver.injected_clicks), 0)
@@ -169,14 +181,64 @@ class TestTagSnapIntegration(unittest.TestCase):
         self.root.update()
         self.assertTrue(self.hud.is_visible)
 
-        # 4. "right click 2" compound command
+        # 4. "right click 2" compound command (instant aim + click)
         handled_right_click = self.coordinator.handle_speech_phrase("right click 2")
         self.root.update()
         self.assertTrue(handled_right_click)
-        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
-        self.assertFalse(self.hud.is_visible)
+        self.assertTrue(self.hud.is_visible)
         self.assertEqual(len(self.driver.injected_clicks), 1)
         self.assertEqual(self.driver.injected_clicks[0][2], "right")
+
+        # 5. Dismiss with "close"
+        self.coordinator.handle_speech_phrase("close")
+        self.root.update()
+        self.assertFalse(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+
+    def test_option_1_aim_then_click_sequential(self):
+        # Trigger tag
+        self.coordinator.handle_speech_phrase("tag")
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+
+        # 1. Aim at target 1 (moves cursor, highlights badge, tags stay visible)
+        self.assertTrue(self.coordinator.handle_speech_phrase("1"))
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+        self.assertEqual(self.driver.injected_glides[-1], (140, 120))
+        self.assertEqual(len(self.driver.injected_clicks), 0)
+
+        # 2. Re-aim to target 2 before clicking
+        self.assertTrue(self.coordinator.handle_speech_phrase("2"))
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+        self.assertEqual(self.driver.injected_glides[-1], (240, 120))
+        self.assertEqual(len(self.driver.injected_clicks), 0)
+
+        # 3. Fire click on target 2
+        self.assertTrue(self.coordinator.handle_speech_phrase("click"))
+        self.root.update()
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[-1], (240, 120, "left", 1))
+        # Tags remain visible for next action!
+        self.assertTrue(self.hud.is_visible)
+
+        # 4. Aim to target 5 and right click
+        self.assertTrue(self.coordinator.handle_speech_phrase("5"))
+        self.root.update()
+        self.assertEqual(self.driver.injected_glides[-1], (540, 120))
+        self.assertTrue(self.coordinator.handle_speech_phrase("right"))
+        self.assertTrue(self.coordinator.handle_speech_phrase("click"))
+        self.root.update()
+        self.assertEqual(len(self.driver.injected_clicks), 2)
+        self.assertEqual(self.driver.injected_clicks[-1], (540, 120, "right", 1))
+        self.assertTrue(self.hud.is_visible)
+
+        # 5. Dismiss with "done"
+        self.assertTrue(self.coordinator.handle_speech_phrase("done"))
+        self.root.update()
+        self.assertFalse(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
 
 
 if __name__ == "__main__":

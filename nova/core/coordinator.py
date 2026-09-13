@@ -51,6 +51,7 @@ class TagSnapCoordinator:
         self._lock = threading.RLock()
         self._current_pages: List[List[UIElementTarget]] = []
         self._current_page_idx: int = 0
+        self._selected_target: Optional[UIElementTarget] = None
 
     @property
     def current_page_index(self) -> int:
@@ -61,6 +62,11 @@ class TagSnapCoordinator:
     def total_pages(self) -> int:
         with self._lock:
             return len(self._current_pages)
+
+    @property
+    def selected_target(self) -> Optional[UIElementTarget]:
+        with self._lock:
+            return self._selected_target
 
     def handle_speech_phrase(self, phrase: str) -> bool:
         """
@@ -75,13 +81,12 @@ class TagSnapCoordinator:
             if not tokens:
                 return False
 
-            # 1. Emergency Dismissal / Halt (FR-021)
-            if any(t in ("halt", "cancel", "dismiss", "close") for t in tokens):
+            # 1. Dismissal / Close (FR-021)
+            if any(t in ("halt", "cancel", "dismiss", "close", "done") for t in tokens):
                 self.dismiss_hud()
                 return True
 
             # 2. Tag / Scan Command (FR-006)
-            # Matches "tag", "scan", "hey tag", "nova tag", "tag it", etc.
             if any(t in ("tag", "scan") for t in tokens):
                 return self.trigger_tag_scan()
 
@@ -99,26 +104,33 @@ class TagSnapCoordinator:
             elif has_right:
                 self.driver.arm_modifier("right")
 
-            # 5. Direct In-Place Click (FR-010) or Target Selection with modifier
-            if "click" in tokens:
-                digit = None
-                for token in tokens:
-                    if token in SPOKEN_DIGIT_MAP:
-                        digit = SPOKEN_DIGIT_MAP[token]
-                        break
-                if digit is not None and self.hud.is_visible:
-                    return self.select_target_badge(digit)
-                return self.trigger_direct_click()
-
-            # If only modifier was spoken without digit
-            if (has_double or has_right) and not any(token in SPOKEN_DIGIT_MAP for token in tokens):
-                return True
-
-            # 6. Single-Digit Badge Selection (FR-007, FR-009, FR-011)
+            # 5. Extract digit if present
+            digit = None
             for token in tokens:
                 if token in SPOKEN_DIGIT_MAP:
                     digit = SPOKEN_DIGIT_MAP[token]
-                    return self.select_target_badge(digit)
+                    break
+
+            # 6. Compound Shortcut: "click <digit>" or "<modifier> click <digit>" (Instant Snap & Click)
+            if "click" in tokens and digit is not None:
+                if self.hud.is_visible:
+                    if self.aim_at_target_badge(digit):
+                        return self.execute_target_click()
+                    return False
+
+            # 7. Direct Click or Confirmation Click on Aimed Target
+            if "click" in tokens:
+                if self.hud.is_visible and self._selected_target is not None:
+                    return self.execute_target_click()
+                return self.trigger_direct_click()
+
+            # If only modifier was spoken without digit or click
+            if (has_double or has_right) and digit is None:
+                return True
+
+            # 8. Single-Digit Aiming (Option 1: Aim then Click)
+            if digit is not None and self.hud.is_visible:
+                return self.aim_at_target_badge(digit)
 
         return False
 
@@ -137,6 +149,7 @@ class TagSnapCoordinator:
 
             self._current_pages = pages
             self._current_page_idx = 0
+            self._selected_target = None
 
             # Transition state machine to TRACKING
             self.state_machine.transition_to(SystemState.TRACKING)
@@ -153,6 +166,7 @@ class TagSnapCoordinator:
                 return False
 
             self._current_page_idx += 1
+            self._selected_target = None
             self.driver.disarm_modifier()  # FR-007: Pagination resets pending modifiers
             page_targets = self._current_pages[self._current_page_idx]
             self.hud.show_targets(page_targets, self._current_page_idx, len(self._current_pages))
@@ -165,19 +179,20 @@ class TagSnapCoordinator:
                 return False
 
             self._current_page_idx -= 1
+            self._selected_target = None
             self.driver.disarm_modifier()  # FR-007: Pagination resets pending modifiers
             page_targets = self._current_pages[self._current_page_idx]
             self.hud.show_targets(page_targets, self._current_page_idx, len(self._current_pages))
             return True
 
-    def select_target_badge(self, digit: int) -> bool:
+    def aim_at_target_badge(self, digit: int) -> bool:
         """
-        Execute target selection:
-        1. Lock badge visual highlight
-        2. Pre-click target re-validation (FR-011)
-        3. 78ms non-blocking cursor glide (FR-009)
-        4. SendInput click dispatch with active modifier
-        5. Dismiss HUD and restore IDLE_ACTIVE state
+        Two-step Flow Step 1 (Aim):
+        1. Locate target on current page
+        2. Lock badge visual highlight (amber)
+        3. Pre-glide target re-validation (FR-011)
+        4. 78ms non-blocking cursor glide to target centroid (FR-009)
+        5. Store _selected_target; HUD remains active for confirmation or re-aiming
         """
         with self._lock:
             if not self._current_pages or not self.hud.is_visible:
@@ -194,29 +209,20 @@ class TagSnapCoordinator:
                 logger.warning("No target found for badge digit %d on current page.", digit)
                 return False
 
-            # Lock visual badge highlight (amber)
-            self.hud.highlight_target(digit)
-
-            # Pre-click target re-validation (FR-011)
+            # Pre-glide target re-validation (FR-011)
             is_valid = self.crawler.revalidate_target(target, tolerance_px=5)
             if not is_valid:
                 logger.warning(
-                    "Action aborted: Target %d failed pre-click re-validation (moved or window changed).",
+                    "Action aborted: Target %d failed pre-aim re-validation (moved or window changed).",
                     digit,
                 )
                 self.dismiss_hud()
-                self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
                 return False
 
-            # Transition state machine to EXECUTING
-            self.state_machine.transition_to(SystemState.EXECUTING)
+            # Lock visual badge highlight (amber)
+            self.hud.highlight_target(digit)
 
-            # Determine click action from active modifier (FR-012)
-            modifier = self.driver.get_active_modifier()
-            button = "right" if modifier == "right" else "left"
-            click_count = 2 if modifier == "double" else 1
-
-            # Execute 78ms non-blocking cursor glide to target centroid (FR-009)
+            # Glide cursor to target centroid
             self.driver.glide_to(
                 target.centroid_x,
                 target.centroid_y,
@@ -224,12 +230,44 @@ class TagSnapCoordinator:
                 reduced_motion=self.reduced_motion,
             )
 
-            # Dispatch click
-            self.driver.click(button=button, click_count=click_count)
+            self._selected_target = target
+            logger.info("Aimed cursor at Target %d (%d, %d). Badges active.", digit, target.centroid_x, target.centroid_y)
+            return True
 
-            # Dismiss HUD and return to IDLE_ACTIVE
-            self.dismiss_hud()
-            self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+    def select_target_badge(self, digit: int) -> bool:
+        """Compatibility helper: aims at target badge (Option 1)."""
+        return self.aim_at_target_badge(digit)
+
+    def execute_target_click(self) -> bool:
+        """
+        Two-step Flow Step 2 (Fire):
+        1. Validate selected target
+        2. Transition state machine to EXECUTING
+        3. Dispatch mouse click with active modifier (left/right/double)
+        4. Re-validate and transition state back to TRACKING (HUD stays visible for sequential clicks!)
+        """
+        with self._lock:
+            if not self._selected_target:
+                return self.trigger_direct_click()
+
+            target = self._selected_target
+            is_valid = self.crawler.revalidate_target(target, tolerance_px=5)
+            if not is_valid:
+                logger.warning("Target re-validation failed before click dispatch.")
+                self.dismiss_hud()
+                return False
+
+            self.state_machine.transition_to(SystemState.EXECUTING)
+            modifier = self.driver.get_active_modifier()
+            button = "right" if modifier == "right" else "left"
+            click_count = 2 if modifier == "double" else 1
+
+            self.driver.click(button=button, click_count=click_count)
+            self.driver.disarm_modifier()
+
+            # State returns to TRACKING so badges remain usable!
+            self.state_machine.transition_to(SystemState.TRACKING)
+            logger.info("Executed %s click (x%d) on Target %d (%d, %d). Tags remain active.", button, click_count, target.target_id, target.centroid_x, target.centroid_y)
             return True
 
     def trigger_direct_click(self) -> bool:
@@ -251,5 +289,6 @@ class TagSnapCoordinator:
             self.driver.disarm_modifier()
             self._current_pages = []
             self._current_page_idx = 0
-            if self.state_machine.current_state == SystemState.TRACKING:
+            self._selected_target = None
+            if self.state_machine.current_state in (SystemState.TRACKING, SystemState.EXECUTING):
                 self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
