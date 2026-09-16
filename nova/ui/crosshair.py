@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 COLOR_CROSSHAIR_LINE = "#00FF9D"
 CROSSHAIR_LINE_WIDTH = 2
-DEFAULT_SWEEP_SPEED_PX_S = 400.0  # 400 px/second sweep speed
+DEFAULT_SWEEP_SPEED_PX_S = 180.0  # 180 px/second sweep speed (tuned for precise auditory-vocal human latency)
 ANIMATION_TICK_MS = 16  # ~60 FPS
 
 
@@ -34,11 +34,13 @@ class CrosshairOverlay:
         driver: Optional[InputDriver] = None,
         sweep_speed: float = DEFAULT_SWEEP_SPEED_PX_S,
         on_hit_complete: Optional[Callable[[int, int], None]] = None,
+        snap_resolver: Optional[Callable[[int, int], Optional[Tuple[int, int]]]] = None,
     ) -> None:
         self.root = root
         self.driver = driver or InputDriver()
         self.sweep_speed = sweep_speed
         self.on_hit_complete = on_hit_complete
+        self.snap_resolver = snap_resolver
 
         self._lock = threading.RLock()
         self._is_visible = False
@@ -101,6 +103,11 @@ class CrosshairOverlay:
             return self._is_visible
 
     @property
+    def is_active(self) -> bool:
+        """Alias for is_visible to preserve interface compatibility."""
+        return self.is_visible
+
+    @property
     def phase(self) -> int:
         with self._lock:
             return self._phase
@@ -127,10 +134,28 @@ class CrosshairOverlay:
             self._is_visible = True
             self._last_tick_time = time.monotonic()
 
-            if self.window:
-                self.window.deiconify()
-                self._draw_lines()
-                self._schedule_tick()
+            def _show_window() -> None:
+                if self.window:
+                    geom = f"{self.vw}x{self.vh}+{self.vx}+{self.vy}"
+                    try:
+                        self.window.geometry(geom)
+                        self.window.deiconify()
+                        self.window.lift()
+                        self.window.attributes("-topmost", True)
+                    except Exception as exc:
+                        logger.debug("Crosshair deiconify skipped: %s", exc)
+                    self._draw_lines()
+                    self._schedule_tick()
+
+            if threading.current_thread() is threading.main_thread():
+                _show_window()
+            elif self.root:
+                try:
+                    self.root.after(0, _show_window)
+                except Exception:
+                    _show_window()
+            else:
+                _show_window()
 
             logger.info("Crosshair scanner started (Phase 1: Horizontal Sweep). Bounds: %dx%d", self.vw, self.vh)
 
@@ -138,21 +163,36 @@ class CrosshairOverlay:
         """Spoken directional steering for crosshair sweep (FR-017)."""
         d = direction.strip().lower()
         with self._lock:
-            if d == "up":
-                self._sweep_dir_y = -1
-                return True
-            elif d == "down":
-                self._sweep_dir_y = 1
-                return True
-            elif d == "left":
-                self._sweep_dir_x = -1
-                return True
-            elif d == "right":
-                self._sweep_dir_x = 1
-                return True
+            if self._phase == 1:
+                if d in ("up", "go up"):
+                    self._sweep_dir_y = -1
+                    return True
+                elif d in ("down", "go down"):
+                    self._sweep_dir_y = 1
+                    return True
+                elif d in ("left", "go left"):
+                    self.lock_y(initial_x_dir=-1)
+                    return True
+                elif d in ("right", "go right"):
+                    self.lock_y(initial_x_dir=1)
+                    return True
+            elif self._phase == 2:
+                if d in ("left", "go left"):
+                    self._sweep_dir_x = -1
+                    return True
+                elif d in ("right", "go right"):
+                    self._sweep_dir_x = 1
+                    return True
+                return False
         return False
 
-    def lock_y(self) -> int:
+    def set_sweep_speed(self, speed_px_s: float) -> None:
+        """Adjust crosshair sweep speed at runtime with bounds safety."""
+        with self._lock:
+            self.sweep_speed = max(50.0, min(800.0, float(speed_px_s)))
+            logger.info("Crosshair sweep speed set to %.1f px/s", self.sweep_speed)
+
+    def lock_y(self, initial_x_dir: int = 1) -> int:
         """
         Phase 1 completion: Locks Y coordinate and transitions to Phase 2 (vertical sweep).
         Suppresses OS click (FR-015).
@@ -160,10 +200,23 @@ class CrosshairOverlay:
         with self._lock:
             self._locked_y = int(round(self._cur_y))
             self._phase = 2
-            self._cur_x = float(self.vx)
-            self._sweep_dir_x = 1
-            logger.info("Crosshair Y coordinate locked at %d. Initiating Phase 2 (Vertical Sweep).", self._locked_y)
-            self._draw_lines()
+            if initial_x_dir == -1:
+                self._cur_x = float(self.v_max_x)
+                self._sweep_dir_x = -1
+            else:
+                self._cur_x = float(self.vx)
+                self._sweep_dir_x = 1
+            logger.info(
+                "Crosshair Y coordinate locked at %d. Initiating Phase 2 (Vertical Sweep dir=%d).",
+                self._locked_y, self._sweep_dir_x
+            )
+            if self.root:
+                try:
+                    self.root.after(0, self._draw_lines)
+                except Exception:
+                    self._draw_lines()
+            else:
+                self._draw_lines()
             return self._locked_y
 
     def hit_and_click(self) -> Tuple[int, int]:
@@ -175,6 +228,22 @@ class CrosshairOverlay:
             self._locked_x = int(round(self._cur_x))
             final_y = self._locked_y if self._locked_y is not None else int(round(self._cur_y))
             final_x = self._locked_x
+
+            # Magnetic CTA Snapping: Automatically pull cursor to center of closest interactive button if within gravity well
+            if self.snap_resolver:
+                try:
+                    snapped = self.snap_resolver(final_x, final_y)
+                    if snapped is not None:
+                        sx, sy = snapped
+                        import math
+                        dist = math.hypot(sx - final_x, sy - final_y)
+                        logger.info(
+                            "Magnetic Snap: Snapped cursor from (%d, %d) to nearby CTA at (%d, %d) (distance: %.1f px).",
+                            final_x, final_y, sx, sy, dist,
+                        )
+                        final_x, final_y = sx, sy
+                except Exception as exc:
+                    logger.debug("Magnetic CTA snap resolution skipped: %s", exc)
 
             logger.info("Crosshair Hit at (%d, %d). Snapping cursor and clicking.", final_x, final_y)
 
@@ -197,24 +266,37 @@ class CrosshairOverlay:
         with self._lock:
             self._is_visible = False
             self._phase = 1
-            if self._anim_job and self.root:
-                try:
-                    self.root.after_cancel(self._anim_job)
-                except Exception:
-                    pass
-                self._anim_job = None
 
-            if self.canvas:
-                try:
-                    self.canvas.delete("all")
-                except Exception:
-                    pass
+            def _hide_window() -> None:
+                if self._anim_job and self.root:
+                    try:
+                        self.root.after_cancel(self._anim_job)
+                    except Exception:
+                        pass
+                    self._anim_job = None
 
-            if self.window:
+                if self.canvas:
+                    try:
+                        self.canvas.delete("all")
+                    except Exception:
+                        pass
+
+                if self.window:
+                    try:
+                        self.window.withdraw()
+                    except Exception:
+                        pass
+
+            if threading.current_thread() is threading.main_thread():
+                _hide_window()
+            elif self.root:
                 try:
-                    self.window.withdraw()
+                    self.root.after(0, _hide_window)
                 except Exception:
-                    pass
+                    _hide_window()
+            else:
+                _hide_window()
+
             logger.info("Crosshair scanner hidden.")
 
     def step(self, dt_s: float) -> None:
@@ -227,81 +309,109 @@ class CrosshairOverlay:
                 # Horizontal line sweeping Y
                 self._cur_y += self._sweep_dir_y * self.sweep_speed * dt_s
                 if self._cur_y >= self.v_max_y:
+                    self._cur_y = float(self.v_max_y)
+                    self._sweep_dir_y = -1
+                elif self._cur_y <= self.vy:
                     self._cur_y = float(self.vy)
-                elif self._cur_y < self.vy:
-                    self._cur_y = float(self.v_max_y - 1)
-            elif self._phase == 2:
+                    self._sweep_dir_y = 1
+            else:
                 # Vertical line sweeping X
                 self._cur_x += self._sweep_dir_x * self.sweep_speed * dt_s
                 if self._cur_x >= self.v_max_x:
+                    self._cur_x = float(self.v_max_x)
+                    self._sweep_dir_x = -1
+                elif self._cur_x <= self.vx:
                     self._cur_x = float(self.vx)
-                elif self._cur_x < self.vx:
-                    self._cur_x = float(self.v_max_x - 1)
+                    self._sweep_dir_x = 1
 
     def _schedule_tick(self) -> None:
-        """Schedules the next GUI animation frame at ~60 FPS."""
-        if self._is_visible and self.root:
-            self._anim_job = self.root.after(ANIMATION_TICK_MS, self._on_anim_tick)
+        """Schedule next animation step on Tkinter event loop."""
+        if not self._is_visible:
+            return
 
-    def _on_anim_tick(self) -> None:
-        """Frame update executed on Tkinter thread."""
-        with self._lock:
-            if not self._is_visible:
-                return
+        if self.root:
+            try:
+                self._anim_job = self.root.after(ANIMATION_TICK_MS, self._on_tick)
+            except Exception as exc:
+                logger.debug("Failed to schedule crosshair tick: %s", exc)
+        else:
+            # Headless / synthetic mode
+            pass
 
-            now = time.monotonic()
-            dt_s = (now - self._last_tick_time) if self._last_tick_time > 0 else (ANIMATION_TICK_MS / 1000.0)
-            self._last_tick_time = now
+    def _on_tick(self) -> None:
+        """Periodic animation tick advancing sweep line coordinates."""
+        now = time.monotonic()
+        dt_s = max(0.001, min(0.1, now - self._last_tick_time))
+        self._last_tick_time = now
 
-            self.step(dt_s)
-            self._draw_lines()
-            self._schedule_tick()
+        self.step(dt_s)
+        self._draw_lines()
+        self._schedule_tick()
 
     def _draw_lines(self) -> None:
-        """Renders the laser sweep lines and intersection reticle on Tkinter canvas."""
+        """Render scanning laser lines and status banner onto HUD canvas."""
         if not self.canvas:
             return
 
         try:
             self.canvas.delete("all")
 
+            # Local coordinates relative to virtual desktop origin
+            local_x = int(self._cur_x - self.vx)
+            local_y = int(self._cur_y - self.vy)
+
             if self._phase == 1:
-                # Draw sweeping horizontal line
-                rel_y = int(self._cur_y - self.vy)
+                # Phase 1: Horizontal line sweeping Y
                 self.canvas.create_line(
-                    0, rel_y, self.vw, rel_y,
+                    0, local_y, self.vw, local_y,
                     fill=COLOR_CROSSHAIR_LINE,
                     width=CROSSHAIR_LINE_WIDTH,
                 )
-            elif self._phase == 2:
-                # Draw locked horizontal line
-                rel_y = int((self._locked_y if self._locked_y is not None else self._cur_y) - self.vy)
+            else:
+                # Phase 2: Locked Horizontal line at _locked_y + Sweeping Vertical line at _cur_x
+                locked_local_y = int(self._locked_y - self.vy)
                 self.canvas.create_line(
-                    0, rel_y, self.vw, rel_y,
+                    0, locked_local_y, self.vw, locked_local_y,
                     fill=COLOR_CROSSHAIR_LINE,
                     width=CROSSHAIR_LINE_WIDTH,
                 )
-
-                # Draw sweeping vertical line
-                rel_x = int(self._cur_x - self.vx)
                 self.canvas.create_line(
-                    rel_x, 0, rel_x, self.vh,
+                    local_x, 0, local_x, self.vh,
                     fill=COLOR_CROSSHAIR_LINE,
                     width=CROSSHAIR_LINE_WIDTH,
                 )
-
-                # Draw intersection reticle circle (radius 12px)
+                # Intersecting reticle circle at crosshair point
                 r = 12
                 self.canvas.create_oval(
-                    rel_x - r, rel_y - r, rel_x + r, rel_y + r,
+                    local_x - r, locked_local_y - r, local_x + r, locked_local_y + r,
                     outline=COLOR_CROSSHAIR_LINE,
                     width=2,
                 )
+
+            # High-contrast HUD Banner at top-center
+            banner_x = self.vw // 2
+            if self._phase == 1:
+                hint = "CROSSHAIR [Phase 1/2]: Say 'LOCK' or 'CLICK' to freeze line | Say 'LEFT'/'RIGHT' to switch"
+            else:
+                hint = "CROSSHAIR [Phase 2/2]: Say 'CLICK' or 'HIT' to snap & click | Say 'LEFT'/'RIGHT' to steer"
+
+            self.canvas.create_text(
+                banner_x, 32,
+                text=hint,
+                fill=COLOR_CROSSHAIR_LINE,
+                font=("Segoe UI", 12, "bold"),
+            )
         except Exception as exc:
             logger.debug("Error rendering crosshair lines: %s", exc)
 
     def destroy(self) -> None:
         """Cleanly destroy Tkinter resources."""
+        if self._anim_job and self.root:
+            try:
+                self.root.after_cancel(self._anim_job)
+            except Exception:
+                pass
+            self._anim_job = None
         self.hide()
         if self.window:
             try:

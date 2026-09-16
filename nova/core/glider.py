@@ -9,13 +9,14 @@ import logging
 import math
 import threading
 import time
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from nova.input.driver import InputDriver
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_GLIDE_SPEED_PX_S = 200.0  # 200 px/sec as specified by FR-016
+ANIMATION_TICK_MS = 16  # ~60 FPS
 
 
 class ContinuousGlider:
@@ -39,21 +40,32 @@ class ContinuousGlider:
         self,
         driver: InputDriver,
         speed_px_s: float = DEFAULT_GLIDE_SPEED_PX_S,
+        root: Optional[Any] = None,
+        on_halt: Optional[Callable[[], None]] = None,
     ) -> None:
         self.driver = driver
         self.speed_px_s = speed_px_s
+        self.root = root
+        self.on_halt = on_halt
 
         self._lock = threading.RLock()
         self._heading_deg: float = 0.0  # Default: Right (0 deg)
         self._is_gliding = False
+        self._is_autonomous = False
         self._pos_x: float = 0.0
         self._pos_y: float = 0.0
         self._last_step_time: float = 0.0
+        self._anim_job = None
 
     @property
     def is_gliding(self) -> bool:
         with self._lock:
             return self._is_gliding
+
+    @property
+    def is_autonomous(self) -> bool:
+        with self._lock:
+            return self._is_autonomous
 
     @property
     def heading_degrees(self) -> float:
@@ -80,7 +92,17 @@ class ContinuousGlider:
             logger.info("Cursor glider heading rotated to %.1f deg", self._heading_deg)
             return self._heading_deg
 
-    def start_glide(self) -> None:
+    def prepare_glide(self) -> None:
+        """Enters glide mode ready for direction or vowel hum without unsolicited drift."""
+        with self._lock:
+            cur_x, cur_y = self.driver.get_cursor_pos()
+            self._pos_x = float(cur_x)
+            self._pos_y = float(cur_y)
+            self._is_gliding = False
+            self._is_autonomous = False
+            logger.info("Continuous glider prepared in ready state at (%d, %d)", cur_x, cur_y)
+
+    def start_glide(self, autonomous: bool = False) -> None:
         """Initializes continuous gliding from the current physical cursor position."""
         with self._lock:
             cur_x, cur_y = self.driver.get_cursor_pos()
@@ -88,7 +110,32 @@ class ContinuousGlider:
             self._pos_y = float(cur_y)
             self._last_step_time = time.monotonic()
             self._is_gliding = True
-            logger.info("Continuous glider started at (%.1f, %.1f), heading=%.1f deg", self._pos_x, self._pos_y, self._heading_deg)
+            self._is_autonomous = autonomous
+            logger.info(
+                "Continuous glider started at (%.1f, %.1f), heading=%.1f deg, autonomous=%s",
+                self._pos_x,
+                self._pos_y,
+                self._heading_deg,
+                self._is_autonomous,
+            )
+            if self._is_autonomous and self.root:
+                self._schedule_tick()
+
+    def _schedule_tick(self) -> None:
+        """Schedules the next glider frame tick at ~60 FPS (16ms)."""
+        if self._is_gliding and self._is_autonomous and self.root:
+            try:
+                self._anim_job = self.root.after(ANIMATION_TICK_MS, self._on_anim_tick)
+            except Exception as exc:
+                logger.debug("Failed to schedule glider animation tick: %s", exc)
+
+    def _on_anim_tick(self) -> None:
+        """Autonomous animation tick executed on Tkinter event loop."""
+        with self._lock:
+            if not self._is_gliding:
+                return
+            self.step()
+            self._schedule_tick()
 
     def step(self, dt_s: Optional[float] = None) -> Tuple[int, int]:
         """
@@ -102,7 +149,7 @@ class ContinuousGlider:
 
             now = time.monotonic()
             if dt_s is None:
-                dt_s = (now - self._last_step_time) if self._last_step_time > 0 else 0.02
+                dt_s = (now - self._last_step_time) if self._last_step_time > 0 else (ANIMATION_TICK_MS / 1000.0)
             self._last_step_time = now
 
             rad = math.radians(self._heading_deg)
@@ -121,12 +168,29 @@ class ContinuousGlider:
             self._pos_x = float(actual_x)
             self._pos_y = float(actual_y)
 
+            # If autonomous glide reaches desktop boundary (position clamped), halt autonomous cruise
+            if self._is_autonomous and (target_x != actual_x or target_y != actual_y):
+                logger.info("Autonomous glider reached desktop boundary at (%d, %d); halting glide.", actual_x, actual_y)
+                self.stop_glide()
+                if self.on_halt:
+                    try:
+                        self.on_halt()
+                    except Exception as exc:
+                        logger.error("Error in glider on_halt callback: %s", exc)
+
             return (actual_x, actual_y)
 
     def stop_glide(self) -> Tuple[int, int]:
         """Halts continuous cursor gliding."""
         with self._lock:
             self._is_gliding = False
+            self._is_autonomous = False
+            if self._anim_job and self.root:
+                try:
+                    self.root.after_cancel(self._anim_job)
+                except Exception:
+                    pass
+                self._anim_job = None
             cur_x, cur_y = self.driver.get_cursor_pos()
             logger.info("Continuous glider stopped at (%d, %d)", cur_x, cur_y)
             return (cur_x, cur_y)
@@ -139,7 +203,18 @@ class ContinuousGlider:
         """
         with self._lock:
             self._is_gliding = False
+            self._is_autonomous = False
+            if self._anim_job and self.root:
+                try:
+                    self.root.after_cancel(self._anim_job)
+                except Exception:
+                    pass
+                self._anim_job = None
             cur_x, cur_y = self.driver.get_cursor_pos()
             self.driver.click(x=cur_x, y=cur_y, button=button, click_count=click_count)
             logger.info("Atomic HALT_GLIDE_AND_CLICK executed at (%d, %d)", cur_x, cur_y)
             return (cur_x, cur_y)
+
+    def destroy(self) -> None:
+        """Cancel any pending animation timers and halt continuous glide."""
+        self.stop_glide()

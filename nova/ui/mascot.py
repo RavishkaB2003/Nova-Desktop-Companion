@@ -8,7 +8,8 @@ import ctypes
 import logging
 import math
 import os
-from typing import Dict, Optional
+import sys
+from typing import Callable, Dict, Optional
 import tkinter as tk
 
 from PIL import Image, ImageTk
@@ -49,11 +50,19 @@ def enable_windows_dpi_awareness() -> None:
 
 
 def find_assets_dir() -> str:
-    """Locate the assets/mascot directory."""
-    candidates = [
+    """Locate the assets/mascot directory across source and frozen PyInstaller environments."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(os.path.join(sys._MEIPASS, "assets", "mascot"))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "assets", "mascot"))
+        candidates.append(os.path.join(exe_dir, "_internal", "assets", "mascot"))
+
+    candidates.extend([
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "mascot"),
         os.path.join(os.getcwd(), "assets", "mascot"),
-    ]
+    ])
     for c in candidates:
         if os.path.exists(c):
             return c
@@ -71,9 +80,11 @@ class MascotWidget:
         root: Optional[tk.Tk] = None,
         size: int = DEFAULT_WINDOW_SIZE,
         reduced_motion: bool = False,
+        on_double_click: Optional[Callable[[], None]] = None,
     ) -> None:
         self.size = size
         self.reduced_motion = reduced_motion
+        self.on_double_click = on_double_click
         self.current_visual_state: MascotVisualState = MascotVisualState.SLEEPING
 
         self._root = root
@@ -101,6 +112,36 @@ class MascotWidget:
     @property
     def root(self) -> Optional[tk.Tk]:
         return self._root
+
+    @property
+    def is_visible(self) -> bool:
+        if self._root:
+            try:
+                return bool(self._root.winfo_viewable())
+            except Exception:
+                return False
+        return False
+
+    def show(self) -> None:
+        """Make the mascot window visible on desktop."""
+        if self._root:
+            try:
+                self._root.deiconify()
+                self._root.lift()
+                self._root.attributes("-topmost", True)
+                logger.info("Mascot window shown.")
+            except Exception as exc:
+                logger.error("Failed to show mascot window: %s", exc)
+
+    def hide(self) -> None:
+        """Hide the mascot window (background mode)."""
+        if self._root:
+            try:
+                self._root.withdraw()
+                logger.info("Mascot window hidden (background mode).")
+            except Exception as exc:
+                logger.error("Failed to hide mascot window: %s", exc)
+
 
     def _init_window(self) -> None:
         """Initialize frameless transparent topmost window."""
@@ -199,8 +240,17 @@ class MascotWidget:
             new_y = self._root.winfo_y() + dy
             self._root.geometry(f"+{new_x}+{new_y}")
 
+        def on_double_click(event: Optional[tk.Event] = None) -> None:
+            if callable(self.on_double_click):
+                try:
+                    self.on_double_click()
+                except Exception as exc:
+                    logger.debug("Mascot on_double_click handler failed: %s", exc)
+
+        self._handle_double_click = on_double_click
         self._canvas.bind("<Button-1>", on_drag_start)
         self._canvas.bind("<B1-Motion>", on_drag_motion)
+        self._canvas.bind("<Double-Button-1>", on_double_click)
 
     def set_visual_state(self, state: MascotVisualState) -> None:
         """Thread-safe update of the mascot's visual appearance."""

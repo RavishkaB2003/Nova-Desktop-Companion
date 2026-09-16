@@ -127,6 +127,18 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertIn(self.sm.current_state, (SystemState.STANDBY, SystemState.WAKING))
 
+    def test_wake_word_recovers_from_error_state(self):
+        """Wake word event must recover system from ERROR state back to IDLE_ACTIVE (F-24)."""
+        self.sm.transition_to(SystemState.ERROR)
+        self.assertEqual(self.sm.current_state, SystemState.ERROR)
+
+        handled = self.sm.handle_event(
+            SystemEvent(event_type=SystemEventType.WAKE_WORD_DETECTED)
+        )
+        self.assertTrue(handled)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+
 
 if __name__ == "__main__":
     unittest.main()
+

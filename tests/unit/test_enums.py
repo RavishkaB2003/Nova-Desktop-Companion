@@ -52,11 +52,14 @@ class TestCoreEnums(unittest.TestCase):
             "GLIDE_STOP",
             "CROSSHAIR_START",
             "CROSSHAIR_STOP",
+            "ACTIVATE_TRIGGERED",
+            "DEACTIVATE_TRIGGERED",
             "AUDIO_STREAM_ERROR",
             "AUDIO_STREAM_RESTORED",
         }
         actual_events = {event.value for event in SystemEventType}
         self.assertEqual(expected_events, actual_events)
+
 
     def test_enum_string_inheritance(self):
         self.assertTrue(isinstance(SystemState.STANDBY, str))

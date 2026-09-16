@@ -56,6 +56,12 @@ class TestMascotWidget(unittest.TestCase):
             img = self.widget._raw_images[state]
             self.assertEqual(img.size, (DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_SIZE))
 
+    def test_double_click_callback(self):
+        clicked = []
+        self.widget.on_double_click = lambda: clicked.append(True)
+        self.widget._handle_double_click()
+        self.assertEqual(len(clicked), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

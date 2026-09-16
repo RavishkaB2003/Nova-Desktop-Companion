@@ -7,8 +7,122 @@ Implemented using Windows Core Audio COM interfaces (IAudioEndpointVolume).
 import logging
 import threading
 from typing import Optional
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# Windows Core Audio GUIDs
+CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C4579291692E}"
+IID_IMMDeviceEnumerator = "{A95664D2-9614-4F35-A746-DE8DB63617E6}"
+IID_IAudioEndpointVolume = "{5CDF2C82-841E-4546-9722-0CF74078229A}"
+IID_IMMDevice = "{D666063F-1587-4E43-81F1-B948E807363F}"
+
+# Module-level COM interface definitions to prevent duplicate registration in comtypes registry
+try:
+    from ctypes import POINTER, byref, c_float, c_int, c_long, c_void_p
+    import comtypes
+    from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
+
+    guid_device_enum = GUID(CLSID_MMDeviceEnumerator)
+    guid_device_enum_iface = GUID(IID_IMMDeviceEnumerator)
+    guid_endpoint_vol = GUID(IID_IAudioEndpointVolume)
+    guid_imm_device = GUID(IID_IMMDevice)
+
+    class IAudioEndpointVolume(IUnknown):
+        _iid_ = guid_endpoint_vol
+        _methods_ = [
+            COMMETHOD([], HRESULT, "RegisterControlChangeNotify", (["in"], c_void_p, "pNotify")),
+            COMMETHOD([], HRESULT, "UnregisterControlChangeNotify", (["in"], c_void_p, "pNotify")),
+            COMMETHOD([], HRESULT, "GetChannelCount", (["out"], POINTER(c_int), "pnChannelCount")),
+            COMMETHOD([], HRESULT, "SetMasterVolumeLevel", (["in"], c_float, "fLevelDB"), (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "SetMasterVolumeLevelScalar", (["in"], c_float, "fLevel"), (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "GetMasterVolumeLevel", (["out"], POINTER(c_float), "pfLevelDB")),
+            COMMETHOD([], HRESULT, "GetMasterVolumeLevelScalar", (["out"], POINTER(c_float), "pfLevel")),
+            COMMETHOD([], HRESULT, "SetChannelVolumeLevel", (["in"], c_int, "nChannel"), (["in"], c_float, "fLevelDB"), (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "SetChannelVolumeLevelScalar", (["in"], c_int, "nChannel"), (["in"], c_float, "fLevel"), (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "GetChannelVolumeLevel", (["in"], c_int, "nChannel"), (["out"], POINTER(c_float), "pfLevelDB")),
+            COMMETHOD([], HRESULT, "GetChannelVolumeLevelScalar", (["in"], c_int, "nChannel"), (["out"], POINTER(c_float), "pfLevel")),
+            COMMETHOD([], HRESULT, "SetMute", (["in"], c_int, "bMute"), (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "GetMute", (["out"], POINTER(c_int), "pbMute")),
+            COMMETHOD([], HRESULT, "GetVolumeStepInfo", (["out"], POINTER(c_int), "pnStep"), (["out"], POINTER(c_int), "pnStepCount")),
+            COMMETHOD([], HRESULT, "VolumeStepUp", (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "VolumeStepDown", (["in"], POINTER(GUID), "pguidEventContext")),
+            COMMETHOD([], HRESULT, "QueryHardwareSupport", (["out"], POINTER(c_int), "pdwHardwareSupportMask")),
+            COMMETHOD([], HRESULT, "GetVolumeRange", (["out"], POINTER(c_float), "pflVolumeMindB"), (["out"], POINTER(c_float), "pflVolumeMaxdB"), (["out"], POINTER(c_float), "pflVolumeIncrementdB")),
+        ]
+
+    class IMMDevice(IUnknown):
+        _iid_ = guid_imm_device
+        _methods_ = [
+            COMMETHOD([], HRESULT, "Activate",
+                (["in"], POINTER(GUID), "iid"),
+                (["in"], c_long, "dwClsCtx"),
+                (["in"], c_void_p, "pActivationParams"),
+                (["out"], POINTER(POINTER(IAudioEndpointVolume)), "ppInterface")),
+        ]
+
+    class IMMDeviceEnumerator(IUnknown):
+        _iid_ = guid_device_enum_iface
+        _methods_ = [
+            COMMETHOD([], HRESULT, "EnumAudioEndpoints",
+                (["in"], c_int, "dataFlow"),
+                (["in"], c_long, "dwStateMask"),
+                (["out"], POINTER(c_void_p), "ppDevices")),
+            COMMETHOD([], HRESULT, "GetDefaultAudioEndpoint",
+                (["in"], c_int, "dataFlow"),
+                (["in"], c_int, "role"),
+                (["out"], POINTER(POINTER(IMMDevice)), "ppEndpoint")),
+        ]
+    HAS_COM = True
+except Exception:
+    HAS_COM = False
+
+
+class HarmonicChimeSynthesizer:
+    """
+    Synthesizes pleasant, cosine-tapered harmonic audio chimes using NumPy and sounddevice.
+    Avoids harsh, blocking, single-frequency square waves.
+    """
+    SAMPLE_RATE = 16000
+
+    @classmethod
+    def generate_tone(cls, freq: float, duration_ms: float, amplitude: float = 0.25) -> np.ndarray:
+        n_samples = int(cls.SAMPLE_RATE * (duration_ms / 1000.0))
+        if n_samples <= 0:
+            return np.zeros(0, dtype=np.float32)
+        t = np.linspace(0, duration_ms / 1000.0, n_samples, endpoint=False, dtype=np.float32)
+        # Cosine taper / Hann window for smooth envelope without audible clicks
+        envelope = 0.5 * (1.0 - np.cos(2.0 * np.pi * np.linspace(0, 1, n_samples, endpoint=False, dtype=np.float32)))
+        waveform = amplitude * np.sin(2.0 * np.pi * freq * t) * envelope
+        return waveform.astype(np.float32)
+
+    @classmethod
+    def synthesize_chime(cls, chime_type: str) -> np.ndarray:
+        if chime_type == "wake":
+            t1 = cls.generate_tone(587.33, 70)
+            t2 = cls.generate_tone(880.0, 90)
+            return np.concatenate([t1, t2])
+        elif chime_type == "sleep":
+            t1 = cls.generate_tone(880.0, 70)
+            t2 = cls.generate_tone(587.33, 90)
+            return np.concatenate([t1, t2])
+        elif chime_type == "error":
+            t1 = cls.generate_tone(440.0, 90)
+            t2 = cls.generate_tone(329.63, 110)
+            return np.concatenate([t1, t2])
+        else:  # acknowledge
+            return cls.generate_tone(880.0, 70)
+
+
+_chime_lock = threading.Lock()
+_is_chime_playing = False
+
+
+def is_chime_playing() -> bool:
+    """Returns True if an audio feedback chime is currently outputting sound through speakers (TM-04)."""
+    with _chime_lock:
+        return _is_chime_playing
 
 
 def play_audio_chime(chime_type: str = "wake", async_play: bool = True) -> bool:
@@ -21,22 +135,42 @@ def play_audio_chime(chime_type: str = "wake", async_play: bool = True) -> bool:
     - 'acknowledge': short confirmation (880Hz)
     """
     def _play() -> None:
+        global _is_chime_playing
+        with _chime_lock:
+            _is_chime_playing = True
         try:
-            import winsound
+            try:
+                import sounddevice as sd
+                waveform = HarmonicChimeSynthesizer.synthesize_chime(chime_type)
+                if len(waveform) > 0:
+                    sd.play(waveform, HarmonicChimeSynthesizer.SAMPLE_RATE, blocking=True)
+                    sd.wait()
+                    import time
+                    time.sleep(0.1)  # 100ms room reverberation window (TM-04)
+                    return
+            except Exception as sd_exc:
+                logger.debug("sounddevice chime playback unavailable: %s", sd_exc)
 
-            if chime_type == "wake":
-                winsound.Beep(587, 80)
-                winsound.Beep(880, 100)
-            elif chime_type == "sleep":
-                winsound.Beep(880, 80)
-                winsound.Beep(587, 100)
-            elif chime_type == "error":
-                winsound.Beep(440, 100)
-                winsound.Beep(330, 120)
-            else:  # acknowledge
-                winsound.Beep(880, 80)
-        except Exception as exc:
-            logger.debug("Audio chime playback unavailable (headless or muted): %s", exc)
+            try:
+                import winsound
+                if chime_type == "wake":
+                    winsound.Beep(587, 80)
+                    winsound.Beep(880, 100)
+                elif chime_type == "sleep":
+                    winsound.Beep(880, 80)
+                    winsound.Beep(587, 100)
+                elif chime_type == "error":
+                    winsound.Beep(440, 100)
+                    winsound.Beep(330, 120)
+                else:  # acknowledge
+                    winsound.Beep(880, 80)
+                import time
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.debug("Audio chime playback unavailable (headless or muted): %s", exc)
+        finally:
+            with _chime_lock:
+                _is_chime_playing = False
 
     if async_play:
         t = threading.Thread(target=_play, name=f"Chime-{chime_type}", daemon=True)
@@ -46,11 +180,6 @@ def play_audio_chime(chime_type: str = "wake", async_play: bool = True) -> bool:
         _play()
         return True
 
-# Windows Core Audio GUIDs
-CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C4579291692E}"
-IID_IMMDeviceEnumerator = "{A95664D2-9614-4F35-A746-DE8DB63617E6}"
-IID_IAudioEndpointVolume = "{5CDF2C82-841E-4546-9722-0CF74078229A}"
-IID_IMMDevice = "{D666063F-1587-4E43-81F1-B948E807363F}"
 
 # Default ducking ratio: attenuate to 25% of current volume
 DEFAULT_DUCK_RATIO = 0.25
@@ -74,62 +203,12 @@ class AudioDuckingManager:
 
     def _init_endpoint_volume(self) -> None:
         """Attempt to bind to Windows Core Audio endpoint volume interface."""
+        if not HAS_COM:
+            logger.warning("Core Audio initialization unavailable (running headless or non-Windows).")
+            self._volume_interface = None
+            return
+
         try:
-            from ctypes import POINTER, byref, c_float, c_int, c_long, c_void_p
-            import comtypes
-            from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
-
-            guid_device_enum = GUID(CLSID_MMDeviceEnumerator)
-            guid_device_enum_iface = GUID(IID_IMMDeviceEnumerator)
-            guid_endpoint_vol = GUID(IID_IAudioEndpointVolume)
-            guid_imm_device = GUID(IID_IMMDevice)
-
-            class IAudioEndpointVolume(IUnknown):
-                _iid_ = guid_endpoint_vol
-                _methods_ = [
-                    COMMETHOD([], HRESULT, "RegisterControlChangeNotify", (["in"], c_void_p, "pNotify")),
-                    COMMETHOD([], HRESULT, "UnregisterControlChangeNotify", (["in"], c_void_p, "pNotify")),
-                    COMMETHOD([], HRESULT, "GetChannelCount", (["out"], POINTER(c_int), "pnChannelCount")),
-                    COMMETHOD([], HRESULT, "SetMasterVolumeLevel", (["in"], c_float, "fLevelDB"), (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "SetMasterVolumeLevelScalar", (["in"], c_float, "fLevel"), (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "GetMasterVolumeLevel", (["out"], POINTER(c_float), "pfLevelDB")),
-                    COMMETHOD([], HRESULT, "GetMasterVolumeLevelScalar", (["out"], POINTER(c_float), "pfLevel")),
-                    COMMETHOD([], HRESULT, "SetChannelVolumeLevel", (["in"], c_int, "nChannel"), (["in"], c_float, "fLevelDB"), (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "SetChannelVolumeLevelScalar", (["in"], c_int, "nChannel"), (["in"], c_float, "fLevel"), (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "GetChannelVolumeLevel", (["in"], c_int, "nChannel"), (["out"], POINTER(c_float), "pfLevelDB")),
-                    COMMETHOD([], HRESULT, "GetChannelVolumeLevelScalar", (["in"], c_int, "nChannel"), (["out"], POINTER(c_float), "pfLevel")),
-                    COMMETHOD([], HRESULT, "SetMute", (["in"], c_int, "bMute"), (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "GetMute", (["out"], POINTER(c_int), "pbMute")),
-                    COMMETHOD([], HRESULT, "GetVolumeStepInfo", (["out"], POINTER(c_int), "pnStep"), (["out"], POINTER(c_int), "pnStepCount")),
-                    COMMETHOD([], HRESULT, "VolumeStepUp", (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "VolumeStepDown", (["in"], POINTER(GUID), "pguidEventContext")),
-                    COMMETHOD([], HRESULT, "QueryHardwareSupport", (["out"], POINTER(c_int), "pdwHardwareSupportMask")),
-                    COMMETHOD([], HRESULT, "GetVolumeRange", (["out"], POINTER(c_float), "pflVolumeMindB"), (["out"], POINTER(c_float), "pflVolumeMaxdB"), (["out"], POINTER(c_float), "pflVolumeIncrementdB")),
-                ]
-
-            class IMMDevice(IUnknown):
-                _iid_ = guid_imm_device
-                _methods_ = [
-                    COMMETHOD([], HRESULT, "Activate",
-                        (["in"], POINTER(GUID), "iid"),
-                        (["in"], c_long, "dwClsCtx"),
-                        (["in"], c_void_p, "pActivationParams"),
-                        (["out"], POINTER(POINTER(IAudioEndpointVolume)), "ppInterface")),
-                ]
-
-            class IMMDeviceEnumerator(IUnknown):
-                _iid_ = guid_device_enum_iface
-                _methods_ = [
-                    COMMETHOD([], HRESULT, "EnumAudioEndpoints",
-                        (["in"], c_int, "dataFlow"),
-                        (["in"], c_long, "dwStateMask"),
-                        (["out"], POINTER(c_void_p), "ppDevices")),
-                    COMMETHOD([], HRESULT, "GetDefaultAudioEndpoint",
-                        (["in"], c_int, "dataFlow"),
-                        (["in"], c_int, "role"),
-                        (["out"], POINTER(POINTER(IMMDevice)), "ppEndpoint")),
-                ]
-
             try:
                 comtypes.CoInitialize()
                 self._com_initialized = True

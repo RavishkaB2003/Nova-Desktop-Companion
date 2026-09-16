@@ -6,6 +6,7 @@ Per-Monitor-V2 DPI scaling, and arm's length 1-meter legibility (NFR-008, NFR-00
 """
 
 import logging
+import threading
 from typing import Dict, List, Optional
 import tkinter as tk
 
@@ -15,9 +16,9 @@ from nova.input.driver import get_virtual_desktop_bounds
 logger = logging.getLogger(__name__)
 
 TRANSPARENT_COLORKEY = "#010203"
-BADGE_WIDTH = 58
-BADGE_HEIGHT = 38
-CORNER_RADIUS = 6
+BADGE_WIDTH = 32
+BADGE_HEIGHT = 21
+CORNER_RADIUS = 4
 
 # Color Tokens
 COLOR_OBSIDIAN = "#050811"
@@ -128,7 +129,13 @@ class HudOverlay:
             self._is_visible = True
             logger.info("Projected %d HUD target badges (Page %d/%d).", len(targets), current_page + 1, total_pages)
 
-        self._window.after(0, _render)
+        if threading.current_thread() is threading.main_thread():
+            _render()
+        elif self._window:
+            try:
+                self._window.after(0, _render)
+            except Exception:
+                _render()
 
     def _draw_badge(self, target: UIElementTarget, locked: bool = False) -> None:
         """Draw an individual 58x38px obsidian target badge centered on (centroid_x, centroid_y)."""
@@ -143,7 +150,7 @@ class HudOverlay:
         x1, y1 = cx + w2, cy + h2
 
         border_color = COLOR_AMBER_LOCKED if locked else COLOR_CYAN_BORDER
-        border_width = 3 if locked else 2
+        border_width = 2 if locked else 1
 
         # Badge obsidian body
         rect_id = self._canvas.create_rectangle(
@@ -153,12 +160,12 @@ class HudOverlay:
             width=border_width,
         )
 
-        # Centered bold digit (18pt, ~18.5:1 contrast ratio against obsidian)
+        # Centered bold digit (11pt, ~18.5:1 contrast ratio against obsidian)
         text_id = self._canvas.create_text(
             cx, cy,
             text=str(target.target_id),
             fill=COLOR_TEXT_WHITE,
-            font=("Segoe UI", 18, "bold"),
+            font=("Segoe UI", 11, "bold"),
         )
 
         self._badge_tag_map[target.target_id] = [rect_id, text_id]
@@ -210,7 +217,13 @@ class HudOverlay:
                         self._canvas.delete(tag_id)
                 self._draw_badge(target, locked=True)
 
-        self._window.after(0, _highlight)
+        if threading.current_thread() is threading.main_thread():
+            _highlight()
+        elif self._window:
+            try:
+                self._window.after(0, _highlight)
+            except Exception:
+                _highlight()
 
     def clear(self) -> None:
         """Erase all active badges and footers from canvas."""
@@ -238,7 +251,13 @@ class HudOverlay:
             self._is_visible = False
             logger.info("HUD target overlay dismissed.")
 
-        self._window.after(0, _hide)
+        if threading.current_thread() is threading.main_thread():
+            _hide()
+        elif self._window:
+            try:
+                self._window.after(0, _hide)
+            except Exception:
+                _hide()
 
     def destroy(self) -> None:
         """Clean up overlay window resources."""

@@ -23,7 +23,7 @@ DEFAULT_PLOSIVE_GATE_MS = 150.0
 
 # Constants for voiced pitch tracking (FR-016)
 PITCH_MIN_HZ = 80.0
-PITCH_MAX_HZ = 350.0
+PITCH_MAX_HZ = 500.0
 DEFAULT_PITCH_CORRELATION_THRESHOLD = 0.65
 DEFAULT_MIN_SUSTAIN_MS = 150.0
 
@@ -260,29 +260,37 @@ class VoicedPitchTracker:
     def compute_nacf_peak(self, signal: np.ndarray) -> Tuple[float, float]:
         """
         Compute peak Normalized Autocorrelation (r_max) and corresponding pitch (Hz)
-        within the fundamental frequency window [80Hz, 350Hz].
+        within the fundamental frequency window [80Hz, 350Hz] via vectorized FFT autocorrelation.
         """
         n = len(signal)
-        if n <= self.max_lag:
+        max_search_lag = min(self.max_lag, n // 2 - 1)
+        if n <= self.max_lag or self.min_lag > max_search_lag:
             return 0.0, 0.0
 
-        # Energy of signal
         total_energy = np.sum(signal ** 2)
         if total_energy < 1e-4:
             return 0.0, 0.0
 
-        best_r = 0.0
-        best_lag = 0
+        # Zero-padded FFT autocorrelation (Wiener-Khinchin theorem)
+        n_fft = 1 << (2 * n - 1).bit_length()
+        f = np.fft.rfft(signal, n=n_fft)
+        corr = np.fft.irfft(f * np.conj(f), n=n_fft)[:n]
 
-        # Search lags in [min_lag, max_lag]
-        for lag in range(self.min_lag, min(self.max_lag + 1, n // 2)):
-            seg1 = signal[: n - lag]
-            seg2 = signal[lag:n]
-            denom = np.sqrt(np.sum(seg1 ** 2) * np.sum(seg2 ** 2)) + 1e-9
-            r = float(np.sum(seg1 * seg2) / denom)
-            if r > best_r:
-                best_r = r
-                best_lag = lag
+        # Cumulative energy squares for exact segmentation denominator
+        sq = signal ** 2
+        cum_sq = np.concatenate(([0.0], np.cumsum(sq)))
+        lags = np.arange(self.min_lag, max_search_lag + 1)
+        seg1_energy = cum_sq[n - lags]
+        seg2_energy = cum_sq[n] - cum_sq[lags]
+        denoms = np.sqrt(seg1_energy * seg2_energy) + 1e-9
+
+        r_vals = corr[lags] / denoms
+        best_idx = int(np.argmax(r_vals))
+        best_r = float(r_vals[best_idx])
+        best_lag = int(lags[best_idx])
+
+        if best_r <= 0.0:
+            return 0.0, 0.0
 
         pitch_hz = (self.sample_rate / best_lag) if best_lag > 0 else 0.0
         return best_r, pitch_hz

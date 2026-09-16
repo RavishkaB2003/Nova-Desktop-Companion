@@ -96,6 +96,48 @@ class TestContinuousGlider(unittest.TestCase):
         self.assertEqual(button, "left")
         self.assertEqual(count, 1)
 
+    def test_autonomous_glider_tick_scheduling(self):
+        """Autonomous mode schedules 16ms animation ticks via root."""
+        class MockRoot:
+            def __init__(self):
+                self.scheduled = []
+                self.cancelled = []
+            def after(self, ms, callback):
+                self.scheduled.append((ms, callback))
+                return len(self.scheduled)
+            def after_cancel(self, job_id):
+                self.cancelled.append(job_id)
+
+        mock_root = MockRoot()
+        glider = ContinuousGlider(driver=self.driver, root=mock_root)
+        glider.start_glide(autonomous=True)
+        self.assertTrue(glider.is_gliding)
+        self.assertTrue(glider.is_autonomous)
+        self.assertEqual(len(mock_root.scheduled), 1)
+        self.assertEqual(mock_root.scheduled[0][0], 16)
+
+        # Simulate tick
+        callback = mock_root.scheduled[0][1]
+        callback()
+        self.assertEqual(len(mock_root.scheduled), 2)
+
+        # Stop glide cancels
+        glider.stop_glide()
+        self.assertFalse(glider.is_gliding)
+        self.assertFalse(glider.is_autonomous)
+        self.assertEqual(len(mock_root.cancelled), 1)
+
+    def test_autonomous_glider_boundary_triggers_on_halt(self):
+        """When autonomous glider hits desktop boundary, on_halt callback is invoked."""
+        halt_called = []
+        glider = ContinuousGlider(driver=self.driver, on_halt=lambda: halt_called.append(True))
+        self.driver.set_cursor_pos(0, 500)
+        glider.set_heading_direction("left")
+        glider.start_glide(autonomous=True)
+        glider.step(dt_s=0.1)
+        self.assertFalse(glider.is_gliding)
+        self.assertEqual(len(halt_called), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

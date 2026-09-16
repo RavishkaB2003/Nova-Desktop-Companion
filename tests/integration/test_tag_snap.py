@@ -62,11 +62,7 @@ class TestTagSnapIntegration(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.root.update_idletasks()
-        except Exception:
-            pass
-        self.hud.destroy()
-        try:
+            self.coordinator.destroy()
             self.root.update_idletasks()
             self.root.destroy()
         except Exception:
@@ -238,6 +234,73 @@ class TestTagSnapIntegration(unittest.TestCase):
         self.assertTrue(self.coordinator.handle_speech_phrase("done"))
         self.root.update()
         self.assertFalse(self.hud.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+
+    def test_spoken_double_click_direct(self):
+        """Direct spoken 'double click' executes left double-click in place and disarms modifier."""
+        self.driver.set_cursor_pos(300, 400)
+        handled = self.coordinator.handle_speech_phrase("double click")
+        self.assertTrue(handled)
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[-1], (300, 400, "left", 2))
+        # Verify modifier was consumed and disarmed
+        self.assertIsNone(self.driver.get_active_modifier())
+
+    def test_spoken_right_click_direct_does_not_nudge(self):
+        """Direct spoken 'right click' executes right click in place and NEVER nudges cursor right."""
+        self.driver.set_cursor_pos(300, 400)
+        handled = self.coordinator.handle_speech_phrase("right click")
+        self.assertTrue(handled)
+        # Position should NOT have moved to (365, 400)
+        self.assertEqual(self.driver.get_cursor_pos(), (300, 400))
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[-1], (300, 400, "right", 1))
+
+    def test_spoken_middle_and_triple_clicks_direct(self):
+        """Direct spoken 'middle click' and 'triple click' execute accurately."""
+        self.driver.set_cursor_pos(500, 500)
+        self.assertTrue(self.coordinator.handle_speech_phrase("middle click"))
+        self.assertEqual(self.driver.injected_clicks[-1], (500, 500, "middle", 1))
+
+        self.assertTrue(self.coordinator.handle_speech_phrase("triple click"))
+        self.assertEqual(self.driver.injected_clicks[-1], (500, 500, "left", 3))
+
+    def test_spoken_close_dismisses_hud_without_laser(self):
+        """Spoken 'close', 'close tag', 'clear' dismiss HUD cleanly without starting crosshair laser."""
+        # 1. Open tags
+        self.coordinator.handle_speech_phrase("tag")
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+
+        # 2. Say "close"
+        handled = self.coordinator.handle_speech_phrase("close")
+        self.root.update()
+        self.assertTrue(handled)
+        self.assertFalse(self.hud.is_visible)
+        self.assertFalse(self.coordinator.crosshair.is_visible)
+        self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
+
+        # 3. Test "close tag"
+        self.coordinator.handle_speech_phrase("tag")
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+        self.assertTrue(self.coordinator.handle_speech_phrase("close tag"))
+        self.root.update()
+        self.assertFalse(self.hud.is_visible)
+        self.assertFalse(self.coordinator.crosshair.is_visible)
+
+    def test_crosshair_call_while_hud_visible_dismisses_hud_safely(self):
+        """Spoken crosshair trigger while HUD badges are active safely dismisses HUD instead of opening laser."""
+        self.coordinator.handle_speech_phrase("tag")
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+
+        # Spurious crosshair trigger while tags are displayed
+        handled = self.coordinator.handle_speech_phrase("laser")
+        self.root.update()
+        self.assertTrue(handled)
+        self.assertFalse(self.hud.is_visible)
+        self.assertFalse(self.coordinator.crosshair.is_visible)
         self.assertEqual(self.sm.current_state, SystemState.IDLE_ACTIVE)
 
 

@@ -24,10 +24,10 @@ if ($status) {
 git checkout client-main
 
 # 3. Pull client-distributable files directly from dev
-git checkout dev -- README.md requirements.txt scripts assets nova tests
+git checkout dev -- README.md requirements.txt scripts assets nova tests nova.spec
 
 # 4. Stage only client-distributable assets & code
-git add README.md requirements.txt scripts/ assets/ nova/ tests/
+git add README.md requirements.txt scripts/ assets/ nova/ tests/ nova.spec
 if (Test-Path "models/.gitkeep") {
     git add models/.gitkeep
 }

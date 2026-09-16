@@ -90,6 +90,89 @@ class TestCrosshairOverlay(unittest.TestCase):
         self.assertFalse(self.crosshair.is_visible)
         self.assertEqual(self.crosshair.phase, 1)
 
+    def test_hit_and_click_with_magnetic_snap(self):
+        """Magnetic CTA snapping pulls final click to CTA centroid when resolver returns match."""
+        # Resolver maps (140, 160) to nearby CTA at (150, 165)
+        def mock_resolver(x, y):
+            if abs(x - 140) <= 20 and abs(y - 160) <= 20:
+                return (150, 165)
+            return None
+
+        self.crosshair.snap_resolver = mock_resolver
+        self.crosshair.start()
+        self.crosshair._cur_y = 160.0
+        self.crosshair.lock_y()
+        self.crosshair._cur_x = 140.0
+
+        final_x, final_y = self.crosshair.hit_and_click()
+
+        # Final click pulled to CTA centroid (150, 165)
+        self.assertEqual((final_x, final_y), (150, 165))
+        self.assertEqual(self.hit_coords, (150, 165))
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        click_x, click_y, button, count = self.driver.injected_clicks[0]
+        self.assertEqual((click_x, click_y), (150, 165))
+
+    def test_hit_and_click_magnetic_snap_miss(self):
+        """When resolver returns None (no CTA within radius), click at raw laser reticle."""
+        self.crosshair.snap_resolver = lambda x, y: None
+        self.crosshair.start()
+        self.crosshair._cur_y = 200.0
+        self.crosshair.lock_y()
+        self.crosshair._cur_x = 300.0
+
+        final_x, final_y = self.crosshair.hit_and_click()
+
+        self.assertEqual((final_x, final_y), (300, 200))
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[0][:2], (300, 200))
+
+    def test_hit_and_click_magnetic_snap_exception_graceful_fallback(self):
+        """If snap_resolver throws an exception, click falls back safely to raw reticle."""
+        def broken_resolver(x, y):
+            raise RuntimeError("UI Automation tree inaccessible")
+
+        self.crosshair.snap_resolver = broken_resolver
+        self.crosshair.start()
+        self.crosshair._cur_y = 250.0
+        self.crosshair.lock_y()
+        self.crosshair._cur_x = 350.0
+
+        final_x, final_y = self.crosshair.hit_and_click()
+
+        self.assertEqual((final_x, final_y), (350, 250))
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[0][:2], (350, 250))
+
+    def test_phase1_directional_left_and_right_steering(self):
+        """Saying 'left' in Phase 1 locks Y and sweeps left starting from right boundary."""
+        self.crosshair.start()
+        self.assertEqual(self.crosshair.phase, 1)
+
+        # Steering left in Phase 1
+        handled = self.crosshair.set_sweep_direction("left")
+        self.assertTrue(handled)
+        self.assertEqual(self.crosshair.phase, 2)
+        self.assertEqual(self.crosshair._sweep_dir_x, -1)
+        self.assertEqual(self.crosshair._cur_x, float(self.crosshair.v_max_x))
+
+    def test_phase2_directional_left_and_right_steering(self):
+        """Steering left and right in Phase 2 changes horizontal direction; up/down returns False."""
+        self.crosshair.start()
+        self.crosshair.lock_y()
+        self.assertEqual(self.crosshair.phase, 2)
+
+        self.assertTrue(self.crosshair.set_sweep_direction("left"))
+        self.assertEqual(self.crosshair._sweep_dir_x, -1)
+
+        self.assertTrue(self.crosshair.set_sweep_direction("right"))
+        self.assertEqual(self.crosshair._sweep_dir_x, 1)
+
+        # Up and Down do not apply to Phase 2 vertical sweep
+        self.assertFalse(self.crosshair.set_sweep_direction("up"))
+        self.assertFalse(self.crosshair.set_sweep_direction("down"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -19,7 +19,7 @@ class TestInputDriver(unittest.TestCase):
 
     def test_constants(self):
         self.assertEqual(DEFAULT_GLIDE_STEPS, 5)
-        self.assertEqual(DEFAULT_MODIFIER_DEBOUNCE_S, 0.75)
+        self.assertEqual(DEFAULT_MODIFIER_DEBOUNCE_S, 1.5)
 
     def test_virtual_desktop_bounds(self):
         min_x, min_y, max_x, max_y = get_virtual_desktop_bounds()
@@ -76,6 +76,28 @@ class TestInputDriver(unittest.TestCase):
         self.driver.click(button="right", click_count=2)
         self.assertEqual(len(self.driver.injected_clicks), 2)
         self.assertEqual(self.driver.injected_clicks[1], (200, 150, "right", 2))
+
+        self.driver.click(button="middle", click_count=1)
+        self.assertEqual(len(self.driver.injected_clicks), 3)
+        self.assertEqual(self.driver.injected_clicks[2], (200, 150, "middle", 1))
+
+        self.driver.click(button="left", click_count=3)
+        self.assertEqual(len(self.driver.injected_clicks), 4)
+        self.assertEqual(self.driver.injected_clicks[3], (200, 150, "left", 3))
+
+    def test_scroll_recording(self):
+        self.driver.scroll(120)
+        self.driver.scroll(-240)
+        self.assertEqual(self.driver.injected_scrolls, [120, -240])
+
+    def test_type_text_recording(self):
+        self.driver.type_text("Hello World!")
+        self.assertEqual(self.driver.injected_keystrokes, ["Hello World!"])
+
+    def test_press_key_recording(self):
+        self.driver.press_key("enter")
+        self.driver.press_key("backspace")
+        self.assertEqual(self.driver.injected_keystrokes, ["<ENTER>", "<BACKSPACE>"])
 
 
 if __name__ == "__main__":

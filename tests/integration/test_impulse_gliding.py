@@ -25,8 +25,10 @@ class MockCrawler(UIAutomationCrawler):
             UIElementTarget(1, "Button 1", "Button", (100, 100, 200, 150), 150, 125, 0, 1234),
             UIElementTarget(2, "Button 2", "Button", (300, 100, 400, 150), 350, 125, 0, 1234),
         ]
+        self._last_crawled_targets = list(self._targets)
 
     def query_foreground_elements(self):
+        self._last_crawled_targets = list(self._targets)
         return [self._targets]
 
     def revalidate_target(self, target, tolerance_px=5):
@@ -59,8 +61,7 @@ class TestImpulseGlidingIntegration(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.hud.destroy()
-            self.crosshair.destroy()
+            self.coordinator.destroy()
             self.root.update_idletasks()
             self.root.destroy()
         except Exception:
@@ -84,17 +85,14 @@ class TestImpulseGlidingIntegration(unittest.TestCase):
         self.assertFalse(handled)
         self.assertEqual(len(self.driver.injected_clicks), 0)
 
-    def test_impulse_in_idle_active_executes_direct_click(self):
-        """FR-015: In IDLE_ACTIVE, impulse executes instantaneous left click at cursor."""
+    def test_impulse_in_idle_active_disarmed(self):
+        """User feedback: In-place mouth click in IDLE_ACTIVE is disarmed to prevent accidental triggers."""
         self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
         self.driver.set_cursor_pos(500, 300)
 
         handled = self.coordinator.handle_impulse()
-        self.assertTrue(handled)
-        self.assertEqual(len(self.driver.injected_clicks), 1)
-        cx, cy, button, count = self.driver.injected_clicks[0]
-        self.assertEqual((cx, cy), (500, 300))
-        self.assertEqual(button, "left")
+        self.assertFalse(handled)
+        self.assertEqual(len(self.driver.injected_clicks), 0)
 
     def test_impulse_in_tracking_executes_target_click(self):
         """FR-015: In TRACKING with aimed badge, impulse fires target click."""
@@ -122,7 +120,7 @@ class TestImpulseGlidingIntegration(unittest.TestCase):
         1. Spoken 'glide' enters GLIDE_ACTIVE
         2. Glider moves at 200 px/s
         3. Spoken 'down' sets heading to 90 deg
-        4. Impulse triggers atomic HALT_GLIDE_AND_CLICK and returns to IDLE_ACTIVE
+        4. Impulse triggers clean halt of glider without firing accidental clicks
         """
         self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
         self.driver.set_cursor_pos(200, 200)
@@ -146,16 +144,13 @@ class TestImpulseGlidingIntegration(unittest.TestCase):
         self.glider.step(0.1)
         self.assertEqual(self.driver.get_cursor_pos(), (220, 220))
 
-        # 4. Acoustic impulse halts glide and clicks at exact stopped coordinate
+        # 4. Acoustic impulse halts glide cleanly without injecting accidental clicks
         impulse_handled = self.coordinator.handle_impulse()
         self.assertTrue(impulse_handled)
         self.assertFalse(self.glider.is_gliding)
         self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
 
-        self.assertEqual(len(self.driver.injected_clicks), 1)
-        click_x, click_y, button, count = self.driver.injected_clicks[0]
-        self.assertEqual((click_x, click_y), (220, 220))
-        self.assertEqual(button, "left")
+        self.assertEqual(len(self.driver.injected_clicks), 0)
 
     def test_crosshair_two_phase_impulse_flow(self):
         """
@@ -229,6 +224,207 @@ class TestImpulseGlidingIntegration(unittest.TestCase):
         self.coordinator.handle_speech_phrase("cancel")
         self.assertFalse(self.crosshair.is_visible)
         self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+
+    def test_crosshair_vocabulary_alternatives(self):
+        """Verify 'cross hair', 'scanner', 'laser', 'freeze', 'mark' work smoothly."""
+        # Trigger via 'cross hair'
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.assertTrue(self.coordinator.handle_speech_phrase("cross hair"))
+        self.assertEqual(self.state_machine.current_state, SystemState.CROSSHAIR_ACTIVE)
+        self.assertTrue(self.crosshair.is_visible)
+
+        # Lock via 'freeze'
+        self.assertTrue(self.coordinator.handle_speech_phrase("freeze"))
+        self.assertEqual(self.crosshair.phase, 2)
+
+        # Hit via 'mark'
+        self.assertTrue(self.coordinator.handle_speech_phrase("mark"))
+        self.assertFalse(self.crosshair.is_visible)
+        self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+
+    def test_glider_voice_stop_and_click_controls(self):
+        """Verify spoken 'move' triggers glider, 'stop' halts, and 'click' fires in GLIDE_ACTIVE."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.driver.set_cursor_pos(300, 300)
+
+        # Trigger via 'move'
+        self.assertTrue(self.coordinator.handle_speech_phrase("move"))
+        self.assertEqual(self.state_machine.current_state, SystemState.GLIDE_ACTIVE)
+        self.assertTrue(self.glider.is_gliding)
+
+        # Stop via 'stop'
+        self.assertTrue(self.coordinator.handle_speech_phrase("stop"))
+        self.assertFalse(self.glider.is_gliding)
+        self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+
+        # Trigger again and halt-click via spoken 'click'
+        self.assertTrue(self.coordinator.handle_speech_phrase("glide"))
+        self.assertTrue(self.glider.is_gliding)
+        self.assertTrue(self.coordinator.handle_speech_phrase("click"))
+        self.assertFalse(self.glider.is_gliding)
+        self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+        self.assertGreaterEqual(len(self.driver.injected_clicks), 1)
+
+    def test_crosshair_phase_1_click_and_direction_locks(self):
+        """Spoken 'click' or 'right' in Phase 1 locks Y and transitions to Phase 2."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.coordinator.handle_speech_phrase("laser")
+        self.assertEqual(self.crosshair.phase, 1)
+
+        # Spoken 'click' locks Phase 1 Y coordinate
+        self.assertTrue(self.coordinator.handle_speech_phrase("click"))
+        self.assertEqual(self.crosshair.phase, 2)
+
+        # Restart and test that 'right' in Phase 1 auto-locks Y and steers Phase 2 right
+        self.coordinator.handle_speech_phrase("cancel")
+        self.coordinator.handle_speech_phrase("laser")
+        self.assertEqual(self.crosshair.phase, 1)
+        self.assertTrue(self.coordinator.handle_speech_phrase("right"))
+        self.assertEqual(self.crosshair.phase, 2)
+        self.assertEqual(self.crosshair._sweep_dir_x, 1)
+
+    def test_glide_no_drift_until_direction_given(self):
+        """Spoken 'glide' alone does not start autonomous movement until direction is spoken."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.assertTrue(self.coordinator.handle_speech_phrase("glide"))
+        self.assertTrue(self.glider.is_gliding)
+        self.assertFalse(self.glider.is_autonomous)
+
+        # Spoken 'down' starts autonomous cruising down
+        self.assertTrue(self.coordinator.handle_speech_phrase("down"))
+        self.assertTrue(self.glider.is_autonomous)
+        self.assertEqual(self.glider.heading_degrees, 90.0)
+
+    def test_closed_dismisses_hud_and_crosshair(self):
+        """Spoken 'closed' dismisses HUD and crosshair without starting laser."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.coordinator.trigger_tag_scan()
+        self.root.update()
+        self.assertTrue(self.hud.is_visible)
+
+        # Spoken 'closed' closes HUD
+        self.assertTrue(self.coordinator.handle_speech_phrase("closed"))
+        self.root.update()
+        self.assertFalse(self.hud.is_visible)
+        self.assertFalse(self.crosshair.is_visible)
+        self.assertNotEqual(self.state_machine.current_state, SystemState.CROSSHAIR_ACTIVE)
+
+    def test_bare_cross_does_not_trigger_laser(self):
+        """Bare 'cross' is de-collided and does not start crosshair scanner; 'cross hair' does."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        # 'cross' alone should NOT trigger scanner
+        handled = self.coordinator.handle_speech_phrase("cross")
+        self.assertFalse(handled)
+        self.assertFalse(self.crosshair.is_visible)
+        self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+
+        # 'cross hair' triggers scanner
+        self.assertTrue(self.coordinator.handle_speech_phrase("cross hair"))
+        self.assertTrue(self.crosshair.is_visible)
+        self.assertEqual(self.state_machine.current_state, SystemState.CROSSHAIR_ACTIVE)
+
+    def test_crosshair_speed_modulation(self):
+        """Spoken 'slow', 'fast', and 'normal' modulate crosshair sweep speed."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.coordinator.handle_speech_phrase("laser")
+        self.assertEqual(self.state_machine.current_state, SystemState.CROSSHAIR_ACTIVE)
+        self.assertEqual(self.crosshair.sweep_speed, 180.0)
+
+        # Spoken 'slow'
+        self.assertTrue(self.coordinator.handle_speech_phrase("slow"))
+        self.assertEqual(self.crosshair.sweep_speed, 100.0)
+
+        # Spoken 'fast'
+        self.assertTrue(self.coordinator.handle_speech_phrase("fast"))
+        self.assertEqual(self.crosshair.sweep_speed, 320.0)
+
+        # Spoken 'normal'
+        self.assertTrue(self.coordinator.handle_speech_phrase("normal"))
+        self.assertEqual(self.crosshair.sweep_speed, 180.0)
+
+    def test_tag_suppression_during_glide(self):
+        """Spoken 'tag' or vowel hum is suppressed during GLIDE_ACTIVE without opening badges."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.coordinator.handle_speech_phrase("glide")
+        self.assertEqual(self.state_machine.current_state, SystemState.GLIDE_ACTIVE)
+
+        # Spoken 'tag' during glide should be swallowed and NOT transition to TRACKING or show HUD
+        self.assertTrue(self.coordinator.handle_speech_phrase("tag"))
+        self.assertEqual(self.state_machine.current_state, SystemState.GLIDE_ACTIVE)
+        self.assertFalse(self.hud.is_visible)
+
+    def test_crosshair_magnetic_snap_end_to_end(self):
+        """Crosshair hit magnetically snaps click to nearby CTA centroid within 65px radius."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+
+        # 1. Start laser scanner via voice
+        self.assertTrue(self.coordinator.handle_speech_phrase("laser"))
+        self.assertEqual(self.state_machine.current_state, SystemState.CROSSHAIR_ACTIVE)
+        self.assertTrue(self.crosshair.is_visible)
+
+        # 2. Lock Y near Button 1 (bounds: (100, 100, 200, 150), centroid: (150, 125))
+        # Lock at Y=115 (10px above centroid)
+        self.crosshair._cur_y = 115.0
+        self.assertTrue(self.coordinator.handle_speech_phrase("lock"))
+        self.assertEqual(self.crosshair.phase, 2)
+        self.assertEqual(self.crosshair._locked_y, 115)
+
+        # 3. Hit at X=160 (10px right of centroid, inside button bounds)
+        self.crosshair._cur_x = 160.0
+        self.assertTrue(self.coordinator.handle_speech_phrase("hit"))
+
+        # 4. Verify overlay dismissed, state returned to IDLE_ACTIVE
+        self.assertFalse(self.crosshair.is_visible)
+        self.assertEqual(self.state_machine.current_state, SystemState.IDLE_ACTIVE)
+
+        # 5. Verify magnetic snap pulled click to CTA centroid (150, 125)
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        click_x, click_y, button, count = self.driver.injected_clicks[0]
+        self.assertEqual((click_x, click_y), (150, 125))
+        self.assertEqual(button, "left")
+
+    def test_voice_directional_nudging_in_idle_active(self):
+        """Spoken 'up', 'down', 'left', 'right', 'nudge', 'jump' step cursor in IDLE_ACTIVE."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.driver.set_cursor_pos(500, 500)
+
+        # 1. Spoken 'up' -> dy = -65 (new calibrated default distance)
+        self.assertTrue(self.coordinator.handle_speech_phrase("up"))
+        self.assertEqual(self.driver.get_cursor_pos(), (500, 435))
+
+        # 2. Spoken 'nudge down' -> dy = +18 (new micro-nudge distance)
+        self.assertTrue(self.coordinator.handle_speech_phrase("nudge down"))
+        self.assertEqual(self.driver.get_cursor_pos(), (500, 453))
+
+        # 3. Spoken 'jump left' -> dx = -160 (new jump distance)
+        self.assertTrue(self.coordinator.handle_speech_phrase("jump left"))
+        self.assertEqual(self.driver.get_cursor_pos(), (340, 453))
+
+        # 4. Spoken 'click' executes direct click at current nudged location
+        self.assertTrue(self.coordinator.handle_speech_phrase("click"))
+        self.assertEqual(len(self.driver.injected_clicks), 1)
+        self.assertEqual(self.driver.injected_clicks[0][:2], (340, 453))
+
+    def test_kinetic_momentum_and_chaining(self):
+        """Rapid consecutive nudges accelerate distance, and chained phrases advance in one shot."""
+        self.state_machine.transition_to(SystemState.IDLE_ACTIVE)
+        self.driver.set_cursor_pos(500, 500)
+
+        # 1. 1st 'up': 65px (1.0x) -> y = 435
+        self.assertTrue(self.coordinator.handle_speech_phrase("up"))
+        self.assertEqual(self.driver.get_cursor_pos(), (500, 435))
+
+        # 2. 2nd 'up' immediately (<1.2s): 130px (2.0x) -> y = 305
+        self.assertTrue(self.coordinator.handle_speech_phrase("up"))
+        self.assertEqual(self.driver.get_cursor_pos(), (500, 305))
+
+        # 3. 3rd 'up' immediately: 195px (3.0x) -> y = 110
+        self.assertTrue(self.coordinator.handle_speech_phrase("up"))
+        self.assertEqual(self.driver.get_cursor_pos(), (500, 110))
+
+        # 4. Single-breath chained utterance 'right right right' -> 3 * 65 = 195px -> x = 695
+        self.assertTrue(self.coordinator.handle_speech_phrase("right right right"))
+        self.assertEqual(self.driver.get_cursor_pos(), (695, 110))
 
 
 if __name__ == "__main__":

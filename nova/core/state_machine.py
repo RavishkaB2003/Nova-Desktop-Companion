@@ -20,12 +20,11 @@ class SystemEvent:
     payload: Optional[Dict[str, Any]] = None
 
 
-# Allowed state transitions: Source -> Set[Destination]
+# Allowed state transitions: Source -> Set[Destination] (Strictly distinct destinations; no self-loops)
 ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
     SystemState.STANDBY: {
         SystemState.WAKING,
         SystemState.ERROR,
-        SystemState.STANDBY,
     },
     SystemState.WAKING: {
         SystemState.IDLE_ACTIVE,
@@ -41,7 +40,6 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.IDLE_ACTIVE,
     },
     SystemState.LISTENING: {
         SystemState.IDLE_ACTIVE,
@@ -52,13 +50,11 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.LISTENING,
     },
     SystemState.DICTATING: {
         SystemState.IDLE_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.DICTATING,
     },
     SystemState.TRACKING: {
         SystemState.EXECUTING,
@@ -67,7 +63,6 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.TRACKING,
     },
     SystemState.EXECUTING: {
         SystemState.IDLE_ACTIVE,
@@ -83,7 +78,6 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.CROSSHAIR_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.GLIDE_ACTIVE,
     },
     SystemState.CROSSHAIR_ACTIVE: {
         SystemState.IDLE_ACTIVE,
@@ -91,12 +85,10 @@ ALLOWED_TRANSITIONS: Dict[SystemState, Set[SystemState]] = {
         SystemState.GLIDE_ACTIVE,
         SystemState.STANDBY,
         SystemState.ERROR,
-        SystemState.CROSSHAIR_ACTIVE,
     },
     SystemState.ERROR: {
         SystemState.STANDBY,
         SystemState.IDLE_ACTIVE,
-        SystemState.ERROR,
     },
 }
 
@@ -117,18 +109,46 @@ STATE_TO_VISUAL_MAP: Dict[SystemState, MascotVisualState] = {
 class StateMachine:
     """
     Central thread-safe state machine for Project NOVA.
-    Guarantees consistent state transitions, observer dispatch, and visual mappings.
+    Guarantees consistent state transitions, observer dispatch, visual mappings,
+    and action generation tracking for stale action invalidation.
     """
 
-    def __init__(self, initial_state: SystemState = SystemState.STANDBY) -> None:
+    def __init__(
+        self,
+        initial_state: SystemState = SystemState.STANDBY,
+        arbiter: Optional[Any] = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._current_state: SystemState = initial_state
+        from nova.core.safety import ActionArbiter
+        self._arbiter: ActionArbiter = arbiter or ActionArbiter(initial_generation=0)
         self._subscribers: List[Callable[[SystemState, SystemState], None]] = []
+
+    @property
+    def arbiter(self) -> Any:
+        return self._arbiter
 
     @property
     def current_state(self) -> SystemState:
         with self._lock:
             return self._current_state
+
+    @property
+    def current_generation(self) -> int:
+        """Returns current monotonically increasing action generation counter (FR-022)."""
+        return self._arbiter.current_generation
+
+    @property
+    def generation(self) -> int:
+        """Alias for current_generation."""
+        return self.current_generation
+
+    def bump_generation(self, reason: str = "") -> int:
+        """
+        Monotonically increment generation counter to invalidate any pending or in-flight actions.
+        Returns the new generation id.
+        """
+        return self._arbiter.bump_generation(reason=reason)
 
     @property
     def current_visual_state(self) -> MascotVisualState:
@@ -182,6 +202,7 @@ class StateMachine:
             current = self._current_state
 
             if event.event_type == SystemEventType.EMERGENCY_HALT:
+                self.bump_generation(reason="EMERGENCY_HALT")
                 return self.transition_to(SystemState.IDLE_ACTIVE if current != SystemState.STANDBY else SystemState.STANDBY)
 
             if event.event_type == SystemEventType.AUDIO_STREAM_ERROR:
@@ -197,10 +218,25 @@ class StateMachine:
                     if self.transition_to(SystemState.WAKING):
                         return self.transition_to(SystemState.IDLE_ACTIVE)
                     return False
+                elif current == SystemState.ERROR:
+                    return self.transition_to(SystemState.IDLE_ACTIVE)
+                return True
+
+            if event.event_type == SystemEventType.ACTIVATE_TRIGGERED:
+                if current == SystemState.ERROR:
+                    return self.transition_to(SystemState.STANDBY)
+                return True
+
+            if event.event_type == SystemEventType.DEACTIVATE_TRIGGERED:
+                self.bump_generation(reason="DEACTIVATE_TRIGGERED")
+                if current != SystemState.STANDBY:
+                    return self.transition_to(SystemState.STANDBY)
                 return True
 
             if event.event_type == SystemEventType.SLEEP_TRIGGERED:
+                self.bump_generation(reason="SLEEP_TRIGGERED")
                 return self.transition_to(SystemState.STANDBY)
+
 
             if event.event_type == SystemEventType.DICTATION_START:
                 return self.transition_to(SystemState.DICTATING)

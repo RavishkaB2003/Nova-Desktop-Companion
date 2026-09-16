@@ -35,8 +35,8 @@ class TestHudOverlay(unittest.TestCase):
             pass
 
     def test_badge_specs_and_colors(self):
-        self.assertEqual(BADGE_WIDTH, 58)
-        self.assertEqual(BADGE_HEIGHT, 38)
+        self.assertEqual(BADGE_WIDTH, 32)
+        self.assertEqual(BADGE_HEIGHT, 21)
         self.assertEqual(TRANSPARENT_COLORKEY, "#010203")
         self.assertEqual(COLOR_OBSIDIAN, "#050811")
         self.assertEqual(COLOR_CYAN_BORDER, "#00F0FF")
