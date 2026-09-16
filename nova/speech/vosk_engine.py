@@ -117,6 +117,21 @@ class VoskSpeechEngine:
             return
 
         try:
+            if getattr(sys, "frozen", False):
+                exe_dir = os.path.dirname(sys.executable)
+                for cand in [
+                    os.path.join(exe_dir, "_internal", "vosk"),
+                    os.path.join(exe_dir, "vosk"),
+                    getattr(sys, "_MEIPASS", ""),
+                ]:
+                    if cand and os.path.exists(cand):
+                        if hasattr(os, "add_dll_directory"):
+                            try:
+                                os.add_dll_directory(cand)
+                            except Exception:
+                                pass
+                        os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
+
             import vosk
             # Suppress verbose Vosk C-level logs if not debugging
             vosk.SetLogLevel(-1)

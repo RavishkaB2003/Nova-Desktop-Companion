@@ -8,6 +8,7 @@ Operates 100% locally with zero persistent user transcription logging (PRIV-002)
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from typing import Callable, Optional
@@ -62,6 +63,21 @@ class DictationPipeline:
     def _init_recognizer(self) -> None:
         """Initialize unconstrained Vosk Kaldi recognizer."""
         try:
+            if getattr(sys, "frozen", False):
+                exe_dir = os.path.dirname(sys.executable)
+                for cand in [
+                    os.path.join(exe_dir, "_internal", "vosk"),
+                    os.path.join(exe_dir, "vosk"),
+                    getattr(sys, "_MEIPASS", ""),
+                ]:
+                    if cand and os.path.exists(cand):
+                        if hasattr(os, "add_dll_directory"):
+                            try:
+                                os.add_dll_directory(cand)
+                            except Exception:
+                                pass
+                        os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
+
             import vosk
             vosk.SetLogLevel(-1)
 

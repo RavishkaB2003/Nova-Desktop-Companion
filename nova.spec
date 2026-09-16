@@ -8,6 +8,9 @@ all runtime dependencies, offline Kaldi speech models, and SVG vector assets.
 import os
 import sys
 
+import importlib.util
+from PyInstaller.utils.hooks import collect_all
+
 block_cipher = None
 
 # Project paths
@@ -17,6 +20,18 @@ datas = [
     (os.path.join(project_root, 'assets'), 'assets'),
     (os.path.join(project_root, 'models', 'vosk-model-small-en-us-0.15'), os.path.join('models', 'vosk-model-small-en-us-0.15')),
 ]
+
+# Explicitly collect Vosk package, DLLs, and transcriber modules
+vosk_datas, vosk_binaries, vosk_hiddenimports = collect_all('vosk')
+datas += vosk_datas
+
+# Ensure site-packages/vosk is bundled into 'vosk'
+vosk_spec = importlib.util.find_spec('vosk')
+if vosk_spec and vosk_spec.origin:
+    vosk_site_dir = os.path.dirname(vosk_spec.origin)
+    datas.append((vosk_site_dir, 'vosk'))
+
+binaries = list(vosk_binaries)
 
 hiddenimports = [
     'pystray',
@@ -33,6 +48,8 @@ hiddenimports = [
     'PIL.Image',
     'PIL.ImageTk',
     'fitz',
+    'pymupdf',
+    'cv2',
     'uiautomation',
     'win32gui',
     'win32con',
@@ -42,9 +59,10 @@ hiddenimports = [
     'ctypes.wintypes',
     'tkinter',
     'tkinter.ttk',
-]
+] + vosk_hiddenimports
 
 # Exclude unnecessary heavy scientific, AI, and notebook libraries present in dev environment
+# NOTE: Do NOT exclude 'unittest' because numpy.testing and scipy internally reference it.
 excludes = [
     'torch',
     'torchvision',
@@ -59,16 +77,14 @@ excludes = [
     'gradio',
     'seaborn',
     'sklearn',
-    'scipy.spatial',
     'tensorboard',
     'pytest',
-    'unittest',
 ]
 
 a = Analysis(
     [os.path.join('nova', '__main__.py')],
     pathex=[project_root],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

@@ -109,6 +109,33 @@ def main() -> int:
         print("[!] Error: Vosk speech model was not bundled into the distribution directory!")
         return 1
 
+    # Verify Vosk native DLLs in _internal/vosk
+    vosk_dll_target = nova_dist / "_internal" / "vosk" / "libvosk.dll"
+    if not vosk_dll_target.exists():
+        print("    [*] Vosk native directory not found in _internal. Copying from Python environment...")
+        import vosk
+        vosk_src = Path(vosk.__file__).resolve().parent
+        shutil.copytree(vosk_src, nova_dist / "_internal" / "vosk", dirs_exist_ok=True)
+        print(f"    [OK] Vosk native package copied to: {nova_dist / '_internal' / 'vosk'}")
+    else:
+        print(f"    [OK] Vosk native package verified at: {vosk_dll_target.parent}")
+
+    # Also ensure models/ and assets/ are mirrored in root of dist for direct access
+    if (nova_dist / "_internal" / "assets").exists() and not (nova_dist / "assets").exists():
+        shutil.copytree(nova_dist / "_internal" / "assets", nova_dist / "assets", dirs_exist_ok=True)
+    if (nova_dist / "_internal" / "models").exists() and not (nova_dist / "models").exists():
+        shutil.copytree(nova_dist / "_internal" / "models", nova_dist / "models", dirs_exist_ok=True)
+
+    # Step 3.5: Run executable self-check
+    print("\n[3.5/5] Executing binary self-check (--check)...")
+    check_res = subprocess.run([str(exe_path), "--check"], capture_output=True, text=True)
+    if check_res.returncode != 0:
+        print(f"[!] Self-check failed with exit code {check_res.returncode}")
+        print(f"    STDOUT: {check_res.stdout}")
+        print(f"    STDERR: {check_res.stderr}")
+        return 1
+    print(f"    [OK] Binary self-check PASSED: {check_res.stdout.strip()}")
+
     total_bundle_size = get_dir_size_mb(nova_dist)
     print(f"    Total uncompressed bundle size: {total_bundle_size:.2f} MB")
 

@@ -137,10 +137,21 @@ class NovaApp:
         self._setup_shutdown_handlers()
 
     def _configure_logging(self) -> None:
+        import os
         level = logging.DEBUG if self.debug else logging.INFO
+        handlers = [logging.StreamHandler()]
+        try:
+            log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ProjectNova")
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, "nova.log")
+            handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        except Exception:
+            pass
         logging.basicConfig(
             level=level,
             format="%(asctime)s [%(levelname)s] (%(threadName)s) %(name)s: %(message)s",
+            handlers=handlers,
+            force=True,
         )
 
     def _on_audio_error(self, exc: Exception) -> None:
@@ -421,11 +432,49 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model-path", type=str, default=None, help="Path to offline Vosk acoustic model")
     parser.add_argument("--device", type=str, default=None, help="Input microphone device ID or name substring")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Perform subsystem self-check (model, assets, audio) and exit immediately",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.check:
+        import sys
+        import os
+        model_p = args.model_path or find_default_model_path()
+        print(f"MODEL_PATH: {model_p}")
+        if not model_p or not os.path.exists(model_p):
+            print("ERROR: Model path does not exist")
+            sys.exit(1)
+        try:
+            if getattr(sys, "frozen", False):
+                exe_dir = os.path.dirname(sys.executable)
+                for cand in [
+                    os.path.join(exe_dir, "_internal", "vosk"),
+                    os.path.join(exe_dir, "vosk"),
+                    getattr(sys, "_MEIPASS", ""),
+                ]:
+                    if cand and os.path.exists(cand):
+                        if hasattr(os, "add_dll_directory"):
+                            try:
+                                os.add_dll_directory(cand)
+                            except Exception:
+                                pass
+                        os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
+            import vosk
+            vosk.SetLogLevel(-1)
+            m = vosk.Model(model_p)
+            rec = vosk.KaldiRecognizer(m, 16000)
+            print("CHECK_SUCCESS: Vosk recognizer initialized successfully")
+            sys.exit(0)
+        except Exception as exc:
+            print(f"CHECK_ERROR: {exc}")
+            sys.exit(1)
+
     app = NovaApp(
         debug=args.debug,
         reduced_motion=args.reduced_motion,
