@@ -16,7 +16,17 @@ ENV/
 build/
 dist/
 *.manifest
-*.spec
+!nova.spec
+
+# Internal agent framework, documentation and runtime
+.agents/
+.agent-runtime/
+artifacts/
+Documentation/
+docs/
+AGENTS.md
+DESIGN.md
+RELEASE_NOTES.md
 
 # Offline acoustic models (downloaded via scripts/download_model.py)
 models/vosk-model-*/
