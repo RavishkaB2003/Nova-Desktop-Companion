@@ -61,13 +61,16 @@ cd Nova-Desktop-Companion
 
 ### 2. Set Up Python Virtual Environment
 ```powershell
-python -m venv .venv
+# 1. Create the virtual environment
+python -m venv --without-pip .venv
 
-# PowerShell (if script execution is restricted, run: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass)
+# 2. Activate it
 .\.venv\Scripts\Activate.ps1
 
-# Command Prompt (cmd.exe)
-# .venv\Scripts\activate.bat
+# 3. Bootstrap pip cleanly
+curl.exe -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+python get-pip.py
+Remove-Item get-pip.py
 ```
 
 ### 3. Install Dependencies
