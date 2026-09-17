@@ -62,7 +62,12 @@ cd Nova-Desktop-Companion
 ### 2. Set Up Python Virtual Environment
 ```powershell
 python -m venv .venv
+
+# PowerShell (if script execution is restricted, run: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass)
 .\.venv\Scripts\Activate.ps1
+
+# Command Prompt (cmd.exe)
+# .venv\Scripts\activate.bat
 ```
 
 ### 3. Install Dependencies
@@ -228,7 +233,8 @@ Nova-Desktop-Companion/
 ├── tests/                   # Unit and integration tests
 ├── scripts/                 # Operational and setup automation
 │   ├── download_model.py    # Offline model downloader
-│   └── package_release.py   # Standalone .exe packaging & checksum generator
+│   ├── package_release.py   # Standalone .exe packaging & checksum generator
+│   └── publish_client.ps1   # Client-facing release publisher script
 ├── nova.spec                # PyInstaller build specification
 ├── requirements.txt         # Pinned production Python dependencies
 └── README.md                # Documentation
@@ -258,6 +264,12 @@ The compiled standalone executable will be at `dist/nova/nova.exe`.
 
 ## Running Tests
 
+Using Python's built-in `unittest` (no extra dependencies required):
+```bash
+python -m unittest discover -s tests
+```
+
+Or using `pytest`:
 ```bash
 pip install pytest
 python -m pytest tests/
